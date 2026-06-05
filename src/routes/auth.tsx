@@ -112,10 +112,9 @@ function AuthPage() {
             </div>
             <Button
               type="submit"
-              variant="gold"
               size="lg"
               disabled={loading}
-              className="w-full mt-2"
+              className="w-full mt-2 bg-primary text-primary-foreground hover:bg-primary-hover"
             >
               {loading ? "Entrando..." : "Entrar"}
             </Button>
