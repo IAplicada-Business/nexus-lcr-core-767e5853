@@ -51,15 +51,15 @@ function AuthPage() {
         />
         <div className="relative font-display text-xl tracking-tight">
           <span>LCR</span>
-          <span className="italic text-accent-gold ml-1.5">Contábil</span>
+          <span className="italic text-accent-lime ml-1.5">Contábil</span>
         </div>
 
         <div className="relative max-w-xl">
-          <div className="text-[0.7rem] tracking-[0.22em] uppercase text-accent-gold mb-6">
+          <div className="text-[0.7rem] tracking-[0.22em] uppercase text-accent-lime mb-6">
             Plataforma interna · LCR
           </div>
           <h2 className="font-display text-5xl leading-[1.05] tracking-tight">
-            Steget före <span className="italic text-accent-gold">em cada</span> conciliação bancária.
+            Steget före <span className="italic text-accent-lime">em cada</span> conciliação bancária.
           </h2>
           <p className="mt-8 text-deep-foreground/65 text-base leading-relaxed max-w-md">
             Cobrança de documentos, lançamentos contábeis e conciliação — um único fluxo para a equipe LCR servir cada cliente com precisão.
@@ -112,10 +112,9 @@ function AuthPage() {
             </div>
             <Button
               type="submit"
-              variant="gold"
               size="lg"
               disabled={loading}
-              className="w-full mt-2"
+              className="w-full mt-2 bg-primary text-primary-foreground hover:bg-primary-hover"
             >
               {loading ? "Entrando..." : "Entrar"}
             </Button>
