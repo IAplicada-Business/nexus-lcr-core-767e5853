@@ -28,8 +28,16 @@ const HIST_IA = ["7","159","267","297","317","427","437","442","447","478","497"
 const SYSTEM_PROMPT = `Você é o classificador de documentos contábeis da LCR Contadores.
 Analise o documento enviado por um cliente e:
 1. Identifique o TIPO entre: 'extrato_bancario', 'nfe_servico', 'nfe_produto', 'planilha_financeira', 'darf', 'guia_inss_fgts', 'recibo', 'fatura', 'comprovante', 'outro'.
-   * MARQUE como 'extrato_bancario' SEMPRE QUE: o documento mostre movimentações bancárias do mês (várias linhas com data/valor da conta), comprovantes consolidados de PIX/TED/DOC/pagamentos do mês, posição consolidada de investimentos (renda fixa/CDB/poupança) — todos esses casos alimentam a conciliação bancária.
-   * Use 'comprovante' SOMENTE para comprovantes avulsos isolados (1 transferência única) que não compõem um extrato consolidado do mês.
+   * 'extrato_bancario' = EXTRATO de CONTA CORRENTE bancária com saldo inicial,
+     movimentações cronológicas do período (entradas E saídas) e saldo final.
+     É um documento contínuo emitido pelo banco que serve de fonte para
+     conciliar TODA a movimentação do mês.
+   * 'planilha_financeira' = posição consolidada de investimentos (CDB, renda
+     fixa, poupança), extratos de aplicações financeiras, fluxos de caixa em
+     planilha. NÃO confundir com extrato bancário.
+   * 'comprovante' = comprovantes avulsos de pagamento/transferência (1 PIX,
+     1 TED, 1 DOC), ainda que agrupados num PDF — são apenas a prova de uma
+     operação, NÃO substituem o extrato bancário.
 2. Extraia os dados estruturados relevantes (resumo no campo dados_extraidos).
 3. Sugira os LANÇAMENTOS contábeis correspondentes.
 
@@ -51,21 +59,27 @@ Regras:
 
 // Mapeia o tipo_documento que a IA retorna (texto livre) para o ENUM
 // documento_tipo do banco. Reconhece sinônimos comuns.
+// Mapeamento conservador: só promove para 'extrato' quando a IA diz
+// explicitamente extrato bancário/movimento bancário. Comprovantes,
+// transferências avulsas e posição consolidada de investimentos NÃO viram
+// extrato — são tipos distintos (outros/planilha_financeira).
 const TIPO_ALIAS: Record<string, string | null> = {
   extrato: "extrato",
   extrato_bancario: "extrato",
   extrato_consolidado: "extrato",
   movimento_bancario: "extrato",
-  comprovante: "extrato",
-  comprovantes: "extrato",
-  comprovante_bancario: "extrato",
-  transferencia: "extrato",
-  transferencias: "extrato",
-  posicao_consolidada: "extrato",
-  posicao_investimentos: "extrato",
+  // posição/aplicações financeiras → planilha
+  posicao_consolidada: "planilha_financeira",
+  posicao_investimentos: "planilha_financeira",
   planilha_financeira: "planilha_financeira",
   planilha: "planilha_financeira",
   fluxo_caixa: "planilha_financeira",
+  // comprovantes avulsos → outros (não há enum 'comprovante')
+  comprovante: "outros",
+  comprovantes: "outros",
+  comprovante_bancario: "outros",
+  transferencia: "outros",
+  transferencias: "outros",
   darf: "darf",
   guia_inss_fgts: "darf",
   gps: "darf",
@@ -89,9 +103,12 @@ function mapearTipoIa(tipo: string | undefined | null): string | null {
   if (!tipo) return null;
   const k = tipo.toLowerCase().replace(/[\s-]+/g, "_");
   if (k in TIPO_ALIAS) return TIPO_ALIAS[k];
-  // Heurística de fallback: substring
-  if (k.includes("extrato") || k.includes("comprovante") || k.includes("movimento_banc")) return "extrato";
+  // Heurística de fallback por substring (mais conservadora: comprovante
+  // vira "outros", não "extrato").
+  if (k.includes("extrato") || k.includes("movimento_banc")) return "extrato";
+  if (k.includes("posicao") || k.includes("aplicacao") || k.includes("investimento")) return "planilha_financeira";
   if (k.includes("planilha") || k.includes("fluxo")) return "planilha_financeira";
+  if (k.includes("comprovante") || k.includes("transferencia")) return "outros";
   if (k.includes("darf") || k.includes("gps") || k.includes("guia")) return "darf";
   if (k.includes("recibo")) return "recibo";
   if (k.includes("fatura")) return "fatura_cartao";
