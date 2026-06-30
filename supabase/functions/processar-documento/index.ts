@@ -194,24 +194,35 @@ Deno.serve(async (req) => {
     lancamentos_sugeridos: { data_lancamento: string; valor: number; tipo_movimento?: string; conta_codigo: string; historico_codigo?: string; descricao: string; confidence?: number }[];
   };
   try {
-    const apiResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: [
-            contentBlock,
-            { type: "text", text: `Empresa atual: ${empresa?.razao_social ?? "?"} (CNPJ ${empresa?.cnpj ?? "?"}).\n\n${ctx}\n\nClassifique este documento e sugira os lançamentos.` },
-          ],
-        }],
-        output_config: { format: { type: "json_schema", schema: SCHEMA } },
-      }),
+    const reqBody = JSON.stringify({
+      model: MODEL,
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{
+        role: "user",
+        content: [
+          contentBlock,
+          { type: "text", text: `Empresa atual: ${empresa?.razao_social ?? "?"} (CNPJ ${empresa?.cnpj ?? "?"}).\n\n${ctx}\n\nClassifique este documento e sugira os lançamentos.` },
+        ],
+      }],
+      output_config: { format: { type: "json_schema", schema: SCHEMA } },
     });
-    if (!apiResp.ok) return markErro(`Claude API ${apiResp.status}: ${(await apiResp.text()).slice(0, 400)}`);
+    // Retry no 529 (overloaded) — sobrecarga transiente da Anthropic, backoff curto (10/20/30s).
+    // O 429 (rate_limit) NÃO é retentado aqui: a espera de ~1min estouraria o timeout da edge;
+    // quem chama (bridge_front.processar_documento_edge) reinvoca a edge após 65s.
+    let apiResp: Response | undefined;
+    for (let tentativa = 0; tentativa < 4; tentativa++) {
+      apiResp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: reqBody,
+      });
+      if (apiResp.ok || apiResp.status !== 529) break;
+      await new Promise((r) => setTimeout(r, 10000 * (tentativa + 1)));
+    }
+    if (!apiResp || !apiResp.ok) {
+      return markErro(`Claude API ${apiResp?.status ?? "?"}: ${apiResp ? (await apiResp.text()).slice(0, 400) : "sem resposta"}`);
+    }
     const dataApi = await apiResp.json();
     if (dataApi.stop_reason === "refusal") return markErro("A IA recusou processar este documento.");
     const tb = (dataApi.content ?? []).find((b: { type: string }) => b.type === "text");
