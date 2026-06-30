@@ -568,8 +568,10 @@ export const conciliarParManual = createServerFn({ method: "POST" })
     return { ok: true, divergencias_count };
   });
 
-// Edita um lançamento (corrigir data/valor/descrição) — usado para acertar uma
-// divergência antes de reconciliar.
+// Edita um lançamento: atribuir/corrigir a conta contábil e ajustar data/valor/
+// descrição. Usado na revisão humana (aba Conciliação bancária) e para acertar
+// uma divergência antes de reconciliar. Ao definir a conta, marca confiança alta
+// (1.0) para o lançamento sair do estado "a revisar".
 export const editarLancamento = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({
@@ -577,12 +579,29 @@ export const editarLancamento = createServerFn({ method: "POST" })
     data_lancamento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     valor: z.number().optional(),
     descricao: z.string().max(200).optional(),
+    conta_codigo: z.string().max(40).optional(),
   }).parse(d))
   .handler(async ({ context, data }) => {
     const patch: Record<string, unknown> = {};
     if (data.data_lancamento) patch.data_lancamento = data.data_lancamento;
     if (typeof data.valor === "number") patch.valor = Math.abs(data.valor);
     if (data.descricao != null) patch.descricao = data.descricao;
+
+    // Atribuir/corrigir conta: resolve o código → conta_id no escopo da empresa
+    // (conta específica da empresa tem prioridade sobre a global, empresa_id null).
+    if (data.conta_codigo) {
+      const { data: lanc } = await context.supabase.from("lancamentos").select("empresa_id").eq("id", data.id).maybeSingle();
+      const empresaId = (lanc as { empresa_id?: string | null } | null)?.empresa_id ?? null;
+      const { data: contas, error: cErr } = await context.supabase
+        .from("plano_contas").select("id, empresa_id, codigo").eq("codigo", data.conta_codigo);
+      if (cErr) throw new Error(cErr.message);
+      const lista = (contas ?? []) as { id: string; empresa_id: string | null; codigo: string }[];
+      const conta = lista.find((c) => c.empresa_id === empresaId) ?? lista.find((c) => c.empresa_id === null) ?? lista[0];
+      if (!conta) throw new Error(`Conta "${data.conta_codigo}" não encontrada no plano de contas.`);
+      patch.conta_id = conta.id;
+      patch.confidence = 1; // conta definida por humano → sai de "a revisar"
+    }
+
     if (Object.keys(patch).length === 0) return { ok: true };
     const { error } = await context.supabase.from("lancamentos").update(patch as never).eq("id", data.id);
     if (error) throw new Error(error.message);
