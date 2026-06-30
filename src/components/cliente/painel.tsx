@@ -24,8 +24,8 @@ const brl = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2,
 // ---------------------------------------------------------------- Documentos
 export function DocumentosTab({ empresaId }: { empresaId: string }) {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({ queryKey: ["documentos"], queryFn: () => listDocumentos() });
-  const docs = (data ?? []).filter((d) => d.empresa?.id === empresaId);
+  const { data, isLoading } = useQuery({ queryKey: ["documentos", empresaId], queryFn: () => listDocumentos({ data: { empresa_id: empresaId } }) });
+  const docs = data ?? [];
   const [processando, setProcessando] = useState<string | null>(null);
   const [aberto, setAberto] = useState<string | null>(null);
 
@@ -351,7 +351,40 @@ export function PlanilhaSciTab({ empresaId, empresaNome, competencia }: { empres
         </CardContent>
       </Card>
 
-      {/* Agregado por conta (SCI) */}
+      {/* Detalhamento por lançamento */}
+      <Card>
+        <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-6 py-3">
+          <ClipboardCheck className="h-4 w-4 text-primary" />
+          <h4 className="font-display text-lg">Detalhamento por lançamento</h4>
+          <span className="text-xs text-muted-foreground">· {lancs.length} lançamento(s)</span>
+        </div>
+        <CardContent className="p-0">
+          <div className="max-h-[28rem] overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead className="w-24">Data</TableHead><TableHead>Conta</TableHead><TableHead>Histórico</TableHead><TableHead>Descrição</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {lancs.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell className="text-sm">{l.data_lancamento ? new Date(l.data_lancamento).toLocaleDateString("pt-BR") : "—"}</TableCell>
+                    <TableCell className="text-sm">
+                      {l.conta ? <span className="font-mono text-xs">{l.conta.codigo}</span> : <span className="text-xs text-amber-700">sem conta</span>}
+                      {l.conta && <div className="text-xs text-muted-foreground">{l.conta.descricao}</div>}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{l.historico?.codigo ?? "—"}</TableCell>
+                    <TableCell className="max-w-[18rem] truncate text-sm" title={l.descricao ?? ""}>{l.descricao}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{l.valor == null ? "—" : brl(l.valor)}</TableCell>
+                  </TableRow>
+                ))}
+                {lancs.length === 0 && <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">Nenhum lançamento nesta competência.</TableCell></TableRow>}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Agregado por conta (SCI) — no final */}
       <Card>
         <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-6 py-3">
           <FileSpreadsheet className="h-4 w-4 text-primary" />
@@ -383,39 +416,6 @@ export function PlanilhaSciTab({ empresaId, empresaNome, competencia }: { empres
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
-
-      {/* Detalhamento por lançamento */}
-      <Card>
-        <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-6 py-3">
-          <ClipboardCheck className="h-4 w-4 text-primary" />
-          <h4 className="font-display text-lg">Detalhamento por lançamento</h4>
-          <span className="text-xs text-muted-foreground">· {lancs.length} lançamento(s)</span>
-        </div>
-        <CardContent className="p-0">
-          <div className="max-h-[28rem] overflow-y-auto">
-            <Table>
-              <TableHeader>
-                <TableRow><TableHead className="w-24">Data</TableHead><TableHead>Conta</TableHead><TableHead>Histórico</TableHead><TableHead>Descrição</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
-              </TableHeader>
-              <TableBody>
-                {lancs.map((l) => (
-                  <TableRow key={l.id}>
-                    <TableCell className="text-sm">{l.data_lancamento ? new Date(l.data_lancamento).toLocaleDateString("pt-BR") : "—"}</TableCell>
-                    <TableCell className="text-sm">
-                      {l.conta ? <span className="font-mono text-xs">{l.conta.codigo}</span> : <span className="text-xs text-amber-700">sem conta</span>}
-                      {l.conta && <div className="text-xs text-muted-foreground">{l.conta.descricao}</div>}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{l.historico?.codigo ?? "—"}</TableCell>
-                    <TableCell className="max-w-[18rem] truncate text-sm" title={l.descricao ?? ""}>{l.descricao}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{l.valor == null ? "—" : brl(l.valor)}</TableCell>
-                  </TableRow>
-                ))}
-                {lancs.length === 0 && <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">Nenhum lançamento nesta competência.</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </div>
         </CardContent>
       </Card>
     </div>

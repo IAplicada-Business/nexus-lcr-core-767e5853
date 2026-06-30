@@ -269,14 +269,19 @@ export const deleteEmpresa = createServerFn({ method: "POST" })
 
 export const listDocumentos = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { data, error } = await context.supabase
+  .inputValidator((d?: { empresa_id?: string }) => z.object({ empresa_id: z.string().uuid().optional() }).parse(d ?? {}))
+  .handler(async ({ context, data }) => {
+    let q = context.supabase
       .from("documentos")
       .select("id, tipo, competencia, origem, status, status_processamento, arquivo_nome, arquivo_url, dados_extraidos, recebido_em, empresa:empresa_id(id, razao_social), responsavel:responsavel_id(nome)")
       .order("recebido_em", { ascending: false })
       .limit(500);
+    // Escopa por empresa quando informado (evita que o limite global de 500
+    // esconda os documentos de um cliente quando há muitos no total).
+    if (data.empresa_id) q = q.eq("empresa_id", data.empresa_id);
+    const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
-    return data ?? [];
+    return rows ?? [];
   });
 
 const createDocSchema = z.object({
