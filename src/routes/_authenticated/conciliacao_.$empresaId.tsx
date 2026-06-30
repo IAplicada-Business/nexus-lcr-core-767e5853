@@ -306,6 +306,21 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 
   return (
     <>
+      {/* Aviso: extrato real não chegou via Gestta */}
+      {!temExtrato && (
+        <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div>
+            <div className="font-medium">Extrato bancário ainda não chegou</div>
+            <p className="text-xs text-amber-800 mt-0.5">
+              A conciliação precisa do <strong>extrato da conta corrente</strong> (saldo inicial → movimentações → saldo final).
+              Comprovantes avulsos, transferências e posição de investimentos <strong>não</strong> substituem o extrato.
+              Verifique no Gestta se ele já foi enviado pelo cliente — ou anexe manualmente em <strong>Documentos</strong> (tipo: Extrato bancário).
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI strip: extrato + saldos + outros lançamentos + ação Conciliar */}
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="rounded-2xl border-0 shadow-soft">
