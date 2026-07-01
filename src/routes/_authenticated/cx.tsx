@@ -5,9 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getCxCarteira } from "@/lib/lcr.functions";
 import { requireAcesso } from "@/lib/guard";
-import { ArrowRight, TrendingUp, TrendingDown, Minus, Heart, Sparkles } from "lucide-react";
+import { ArrowRight, TrendingUp, TrendingDown, Minus, Heart, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, RadialBarChart, RadialBar } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, RadialBarChart, RadialBar } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/cx")({
   beforeLoad: ({ context }) => requireAcesso(context.queryClient, "cx", "/cx"),
@@ -18,7 +18,6 @@ export const Route = createFileRoute("/_authenticated/cx")({
 });
 
 const CORES = { saudavel: "#10b981", atencao: "#f59e0b", risco: "#f43f5e" };
-const fmtPeriodo = (p: string) => p.slice(0, 7);
 function TendIcon({ t }: { t: string | null }) {
   if (t === "subindo") return <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />;
   if (t === "caindo") return <TrendingDown className="h-3.5 w-3.5 text-rose-600" />;
@@ -32,27 +31,39 @@ function CxPage() {
     { name: "Atenção", key: "atencao", value: data.dist.atencao },
     { name: "Risco", key: "risco", value: data.dist.risco },
   ];
-  const totalNps = data.npsResumo.promotores + data.npsResumo.neutros + data.npsResumo.detratores;
-  const pctNps = (n: number) => (totalNps ? (n / totalNps) * 100 : 0);
   const healthPct = Math.max(0, Math.min(100, Math.round(data.mediaHealth ?? 0)));
   const healthRadial = [{ name: "health", value: healthPct, fill: "var(--color-accent-lime)" }];
-  const trendData = data.npsTrend.map((t) => ({ ...t, periodo: fmtPeriodo(t.periodo) }));
-  const npsAnterior = data.npsTrend.length > 1 ? data.npsTrend[data.npsTrend.length - 2].nps : data.npsResumo.npsAtual;
-  const deltaNps = data.npsResumo.npsAtual - npsAnterior;
 
   return (
     <>
-      <PageHeader title="CX ·" emphasis="Experiência" description="Saúde do relacionamento da carteira. Fale com o Cuidador no assistente para ações de relacionamento." />
+      <PageHeader
+        title="CX ·"
+        emphasis="Experiência"
+        description="Saúde operacional da carteira, calculada a partir dos sinais do sistema. Fale com o Cuidador no assistente para ações de relacionamento."
+      />
+
+      <div className="mb-6 flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+        <div>
+          <div className="font-medium">Saúde operacional é a métrica principal desta tela.</div>
+          <div className="mt-1 text-blue-800/80">
+            A partir de julho/2026, cada cliente ganha uma <strong>Saúde operacional</strong> calculada
+            a partir de sinais do próprio sistema (atrasos de fechamento, documentos pendentes, divergências
+            recorrentes, tempo de resposta). NPS será implementado quando a LCR iniciar coleta de pesquisa
+            com os clientes — projeto separado da Fase 2/3.
+          </div>
+        </div>
+      </div>
 
       <ResumoTela itens={[
-        { label: "Health médio", value: data.mediaHealth },
-        { label: "NPS atual", value: data.npsResumo.npsAtual, tone: data.npsResumo.npsAtual >= 0 ? "ok" as const : "warn" as const },
+        { label: "Clientes acompanhados", value: data.total },
+        { label: "Saúde operacional média", value: data.mediaHealth },
         { label: "Saudáveis", value: data.dist.saudavel, tone: "ok" as const },
         { label: "Em atenção", value: data.dist.atencao },
         { label: "Em risco", value: data.dist.risco, tone: "warn" as const },
       ]} />
 
-      {/* HERO — NPS principal com gradient escuro + sparkline embutido */}
+      {/* HERO — Saúde operacional da carteira em destaque */}
       <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="relative overflow-hidden rounded-3xl bg-deep p-7 text-primary-foreground lg:col-span-2">
           <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-primary/40 blur-3xl" />
@@ -61,52 +72,37 @@ function CxPage() {
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-primary-foreground/70">
-                <Sparkles className="h-3.5 w-3.5" /> NPS · último período
+                <Heart className="h-3.5 w-3.5" /> Saúde operacional · carteira
               </div>
               <div className="mt-3 flex items-end gap-3">
-                <span className="font-display text-6xl font-bold leading-none">{data.npsResumo.npsAtual}</span>
-                <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
-                  deltaNps > 0 ? "bg-accent-lime/25 text-accent-lime" : deltaNps < 0 ? "bg-rose-500/25 text-rose-200" : "bg-primary-foreground/10 text-primary-foreground/70")}>
-                  {deltaNps > 0 ? <TrendingUp className="h-3 w-3" /> : deltaNps < 0 ? <TrendingDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
-                  {deltaNps > 0 ? "+" : ""}{deltaNps}
-                </span>
+                <span className="font-display text-6xl font-bold leading-none">{healthPct}</span>
+                <span className="text-lg text-primary-foreground/60">/ 100</span>
               </div>
-              <div className="mt-2 text-xs text-primary-foreground/70">{totalNps} respostas · {data.npsResumo.promotores} promotores · {data.npsResumo.detratores} detratores</div>
+              <div className="mt-2 text-xs text-primary-foreground/70">
+                {data.total} clientes acompanhados · {data.subindo} subindo · {data.caindo} caindo
+              </div>
 
               <div className="mt-6 flex h-2.5 max-w-md overflow-hidden rounded-full bg-primary-foreground/15">
-                <div className="bg-accent-lime" style={{ width: `${pctNps(data.npsResumo.promotores)}%` }} />
-                <div className="bg-amber-400" style={{ width: `${pctNps(data.npsResumo.neutros)}%` }} />
-                <div className="bg-rose-400" style={{ width: `${pctNps(data.npsResumo.detratores)}%` }} />
+                <div className="bg-accent-lime" style={{ width: `${(data.dist.saudavel / (data.total || 1)) * 100}%` }} />
+                <div className="bg-amber-400" style={{ width: `${(data.dist.atencao / (data.total || 1)) * 100}%` }} />
+                <div className="bg-rose-400" style={{ width: `${(data.dist.risco / (data.total || 1)) * 100}%` }} />
               </div>
-            </div>
-
-            <div className="h-32 w-full max-w-xs">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData}>
-                  <defs>
-                    <linearGradient id="npsHeroFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--color-accent-lime)" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="var(--color-accent-lime)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <Tooltip contentStyle={{ background: "rgba(15,23,42,0.9)", border: "none", borderRadius: 10, color: "white", fontSize: 11 }} />
-                  <Area type="monotone" dataKey="nps" stroke="var(--color-accent-lime)" strokeWidth={2.5} fill="url(#npsHeroFill)" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-              <div className="mt-1 flex justify-between text-[10px] uppercase tracking-wider text-primary-foreground/60">
-                {trendData.map((t) => <span key={t.periodo}>{t.periodo.slice(5)}</span>)}
+              <div className="mt-2 flex gap-4 text-[11px] text-primary-foreground/70">
+                <span>■ {data.dist.saudavel} saudáveis</span>
+                <span>■ {data.dist.atencao} em atenção</span>
+                <span>■ {data.dist.risco} em risco</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Health médio — radial gauge */}
+        {/* Saúde operacional média · radial gauge */}
         <div className="rounded-3xl border-0 bg-card p-6 shadow-soft">
           <div className="flex items-center gap-2">
             <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-accent-lime/15 text-accent-lime"><Heart className="h-4 w-4" /></span>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Health médio</div>
-              <div className="font-display text-lg leading-tight">Saúde da carteira</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Média</div>
+              <div className="font-display text-lg leading-tight">Saúde operacional</div>
             </div>
           </div>
           <div className="relative mt-2 h-40">
@@ -146,7 +142,8 @@ function CxPage() {
             </div>
             <div className="col-span-3 space-y-3">
               {pieData.map((d) => {
-                const pct = totalNps ? Math.round((d.value / (data.dist.saudavel + data.dist.atencao + data.dist.risco || 1)) * 100) : 0;
+                const total = data.dist.saudavel + data.dist.atencao + data.dist.risco;
+                const pct = total ? Math.round((d.value / total) * 100) : 0;
                 return (
                   <div key={d.key}>
                     <div className="flex items-baseline justify-between text-sm">
@@ -165,26 +162,46 @@ function CxPage() {
 
         <Card className="rounded-3xl border-0 p-6 shadow-soft">
           <div className="mb-4 flex items-baseline justify-between">
-            <h3 className="font-display text-lg">NPS · série histórica</h3>
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{data.npsTrend.length} períodos</span>
+            <h3 className="font-display text-lg">Como calculamos Saúde operacional</h3>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Fase 2 · julho/26</span>
           </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData}>
-                <defs>
-                  <linearGradient id="npsFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.28} />
-                    <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-                <XAxis dataKey="periodo" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis fontSize={11} tickLine={false} axisLine={false} width={28} />
-                <Tooltip />
-                <Area type="monotone" dataKey="nps" name="NPS" stroke="var(--color-primary)" strokeWidth={2.5} fill="url(#npsFill)" dot={{ r: 3 }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <ul className="space-y-3 text-sm">
+            <li className="flex items-start gap-3">
+              <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              <div>
+                <div className="font-medium">Pontualidade de fechamento</div>
+                <div className="text-xs text-muted-foreground">Dias além da data-corte configurada por cliente</div>
+              </div>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              <div>
+                <div className="font-medium">Envio de documentos</div>
+                <div className="text-xs text-muted-foreground">Frequência e tempo de resposta a pedidos no Gestta</div>
+              </div>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              <div>
+                <div className="font-medium">Taxa de divergência</div>
+                <div className="text-xs text-muted-foreground">Conciliações que precisaram de ajuste manual</div>
+              </div>
+            </li>
+            <li className="flex items-start gap-3">
+              <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              <div>
+                <div className="font-medium">Continuidade do relacionamento</div>
+                <div className="text-xs text-muted-foreground">Tempo de casa e recorrência de contato</div>
+              </div>
+            </li>
+            <li className="flex items-start gap-3 opacity-50">
+              <span className="mt-1 h-2 w-2 rounded-full bg-muted-foreground shrink-0" />
+              <div>
+                <div className="font-medium">NPS <span className="text-xs text-muted-foreground">(quando ativado)</span></div>
+                <div className="text-xs text-muted-foreground">Pesquisa direta com o cliente — projeto separado</div>
+              </div>
+            </li>
+          </ul>
         </Card>
       </div>
 
