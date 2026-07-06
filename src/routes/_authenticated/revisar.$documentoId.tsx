@@ -394,7 +394,20 @@ function PlanilhaPreview({ url, ext }: { url: string; ext: string }) {
       .then((buf) => {
         if (!active) return;
         try {
-          const wb = XLSX.read(buf, { type: "array" });
+          // CSV: o SheetJS assume Windows-1252 p/ bytes crus sem BOM, então um CSV
+          // UTF-8 (comum em export BR) vira mojibake ("ó" → "Ã³"). Decodifica o texto
+          // explicitamente (UTF-8; se não for UTF-8 válido, cai p/ Windows-1252) e lê
+          // como string. Binários (xlsx/xls) trazem o próprio encoding → lê como array.
+          let wb;
+          if (ext === "csv") {
+            const bytes = new Uint8Array(buf);
+            let texto: string;
+            try { texto = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+            catch { texto = new TextDecoder("windows-1252").decode(bytes); }
+            wb = XLSX.read(texto, { type: "string" });
+          } else {
+            wb = XLSX.read(buf, { type: "array" });
+          }
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const data: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
           const lim = data.slice(0, 200).map((r) => r.map((c) => String(c ?? "")));
@@ -406,7 +419,7 @@ function PlanilhaPreview({ url, ext }: { url: string; ext: string }) {
       })
       .catch((e) => { if (active) setErr(e.message); });
     return () => { active = false; };
-  }, [url]);
+  }, [url, ext]);
 
   if (err) {
     return (
