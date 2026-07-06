@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useSuspenseQuery, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { PageHeader, ResumoTela } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Download, Sparkles, Eye, Loader2, ClipboardCheck } from "lucide-react";
+import { Plus, Download, Sparkles, Eye, Loader2, ClipboardCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { StatusPill, variantFor } from "@/components/status-pill";
-import { listDocumentos, listEmpresas, createDocumento, setDocumentoStatus, ensureCompetencia, getDocumentosResumo } from "@/lib/lcr.functions";
+import { listEmpresas, createDocumento, setDocumentoStatus, ensureCompetencia, getDocumentosResumo, listDocumentosPaginado, getDocumentosCompetencias } from "@/lib/lcr.functions";
 import { DOC_TIPO_LABEL, DOC_STATUS_LABEL, formatCompetencia, competenciaAtual } from "@/lib/format";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -23,8 +23,8 @@ export const Route = createFileRoute("/_authenticated/documentos")({
   head: () => ({ meta: [{ title: "Documentos — LCR Contábil" }] }),
   loader: async ({ context }) => {
     await Promise.all([
-      context.queryClient.ensureQueryData({ queryKey: ["documentos"], queryFn: () => listDocumentos() }),
       context.queryClient.ensureQueryData({ queryKey: ["documentos-resumo"], queryFn: () => getDocumentosResumo() }),
+      context.queryClient.ensureQueryData({ queryKey: ["documentos-competencias"], queryFn: () => getDocumentosCompetencias() }),
       context.queryClient.ensureQueryData({ queryKey: ["empresas"], queryFn: () => listEmpresas() }),
     ]);
   },
@@ -34,19 +34,38 @@ export const Route = createFileRoute("/_authenticated/documentos")({
 
 function DocsPage() {
   const qc = useQueryClient();
-  const { data: docs } = useSuspenseQuery({ queryKey: ["documentos"], queryFn: () => listDocumentos() });
-  // KPIs contados no servidor (a lista `docs` é capada em 500). refetch a cada 10s
-  // p/ não "congelar" enquanto o pipeline processa documentos.
+  // KPIs contados no servidor (a lista é paginada). refetch a cada 10s p/ não
+  // "congelar" enquanto o pipeline processa documentos.
   const { data: resumo } = useSuspenseQuery({ queryKey: ["documentos-resumo"], queryFn: () => getDocumentosResumo(), refetchInterval: 10000 });
+  const { data: competencias } = useSuspenseQuery({ queryKey: ["documentos-competencias"], queryFn: () => getDocumentosCompetencias() });
   const { data: empresas } = useSuspenseQuery({ queryKey: ["empresas"], queryFn: () => listEmpresas() });
   const [empresa, setEmpresa] = useState("all");
   const [tipo, setTipo] = useState("all");
   const [status, setStatus] = useState("all");
   const [competencia, setCompetencia] = useState("all");
   const [open, setOpen] = useState(false);
-  const competencias = useMemo(() => [...new Set(docs.map((d) => d.competencia).filter(Boolean))].sort().reverse(), [docs]);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
   const [processando, setProcessando] = useState<string | null>(null);
   const [verDados, setVerDados] = useState<{ nome: string; dados: Record<string, unknown> } | null>(null);
+
+  useEffect(() => { setPage(1); }, [empresa, tipo, status, competencia]);
+
+  // Filtros e paginação NO SERVIDOR (varre todos os +13k docs, não só 500).
+  const { data: pageData, isFetching } = useQuery({
+    queryKey: ["documentos-paginadas", empresa, tipo, status, competencia, page],
+    queryFn: () => listDocumentosPaginado({ data: {
+      empresa_id: empresa === "all" ? undefined : empresa,
+      tipo: tipo === "all" ? undefined : tipo,
+      status: status === "all" ? undefined : status,
+      competencia: competencia === "all" ? undefined : competencia,
+      page, pageSize,
+    } }),
+    placeholderData: keepPreviousData,
+  });
+  const items = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   async function processarIA(id: string) {
     setProcessando(id);
@@ -55,6 +74,7 @@ function DocsPage() {
       if (error) throw new Error(error.message);
       if (data && data.ok === false) throw new Error(data.error ?? "Falha ao processar");
       qc.invalidateQueries({ queryKey: ["documentos"] });
+      qc.invalidateQueries({ queryKey: ["documentos-paginadas"] });
       qc.invalidateQueries({ queryKey: ["documentos-resumo"] });
       toast.success("Documento processado pela IA.");
     } catch (err) {
@@ -67,14 +87,6 @@ function DocsPage() {
   function temDados(dados: unknown): dados is Record<string, unknown> {
     return !!dados && typeof dados === "object" && Object.keys(dados as object).length > 0;
   }
-
-  const filtered = useMemo(() => docs.filter((d) => {
-    if (empresa !== "all" && d.empresa?.id !== empresa) return false;
-    if (tipo !== "all" && d.tipo !== tipo) return false;
-    if (status !== "all" && d.status !== status) return false;
-    if (competencia !== "all" && d.competencia !== competencia) return false;
-    return true;
-  }), [docs, empresa, tipo, status, competencia]);
 
   async function baixar(path: string) {
     // gera uma URL assinada temporária (60s) para o arquivo no bucket privado
@@ -89,6 +101,7 @@ function DocsPage() {
     if (idx < 0 || idx === ordem.length - 1) return;
     await setDocumentoStatus({ data: { id, status: ordem[idx + 1] } });
     qc.invalidateQueries({ queryKey: ["documentos"] });
+    qc.invalidateQueries({ queryKey: ["documentos-paginadas"] });
     qc.invalidateQueries({ queryKey: ["documentos-resumo"] });
   }
 
@@ -145,7 +158,7 @@ function DocsPage() {
                 {Object.entries(DOC_TIPO_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
               </SelectContent>
             </Select>
-            <div className="self-center text-sm text-muted-foreground">{filtered.length} documento(s)</div>
+            <div className="self-center text-sm text-muted-foreground">{total} documento(s){isFetching ? " · atualizando…" : ""}</div>
           </div>
         </div>
         <Table>
@@ -161,7 +174,7 @@ function DocsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((d) => (
+            {items.map((d) => (
               <TableRow key={d.id}>
                 <TableCell className="font-medium">{d.empresa?.razao_social}</TableCell>
                 <TableCell className="text-sm">{DOC_TIPO_LABEL[d.tipo]}</TableCell>
@@ -203,9 +216,20 @@ function DocsPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum documento.</TableCell></TableRow>}
+            {items.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{isFetching ? "Carregando…" : "Nenhum documento."}</TableCell></TableRow>}
           </TableBody>
         </Table>
+        <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+          <div className="text-muted-foreground">Página {page} de {totalPages} · {total} documento(s)</div>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              <ChevronLeft className="h-4 w-4" /> Anterior
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages || isFetching} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+              Próxima <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </Card>
 
       <Dialog open={!!verDados} onOpenChange={(o) => !o && setVerDados(null)}>
@@ -264,12 +288,17 @@ function UploadDialog({ empresas, onSuccess }: { empresas: { id: string; razao_s
       });
 
       qc.invalidateQueries({ queryKey: ["documentos"] });
+      qc.invalidateQueries({ queryKey: ["documentos-paginadas"] });
+      qc.invalidateQueries({ queryKey: ["documentos-resumo"] });
+      qc.invalidateQueries({ queryKey: ["documentos-competencias"] });
       toast.success("Documento enviado. Processando com IA…");
       onSuccess();
 
       // 4) dispara o processamento IA (best-effort) e atualiza a UI ao concluir
       void supabase.functions.invoke("processar-documento", { body: { documento_id: doc.id } }).then(({ data, error }) => {
         qc.invalidateQueries({ queryKey: ["documentos"] });
+        qc.invalidateQueries({ queryKey: ["documentos-paginadas"] });
+        qc.invalidateQueries({ queryKey: ["documentos-resumo"] });
         qc.invalidateQueries({ queryKey: ["lancamentos"] });
         const r = data as { ok?: boolean; lancamentos_gerados?: number; error?: string } | null;
         if (error || !r?.ok) toast.error(r?.error ?? "Falha no processamento IA.");

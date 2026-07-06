@@ -654,6 +654,50 @@ export const listDocumentos = createServerFn({ method: "GET" })
     return rows ?? [];
   });
 
+// Lista paginada + filtrada NO SERVIDOR (a tela de Documentos filtrava no cliente
+// sobre as 500 linhas → KPI dizia "1 classificado" mas a lista mostrava 0). Aqui
+// os filtros (empresa/tipo/status/competência) e a paginação vão pro Postgres.
+export const listDocumentosPaginado = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({
+      empresa_id: z.string().uuid().optional(),
+      tipo: z.string().max(40).optional(),
+      status: z.string().max(20).optional(),
+      competencia: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+      page: z.number().int().min(1).default(1),
+      pageSize: z.number().int().min(10).max(200).default(50),
+    }).parse(d ?? {}),
+  )
+  .handler(async ({ context, data }) => {
+    const from = (data.page - 1) * data.pageSize;
+    const to = from + data.pageSize - 1;
+    let q = context.supabase
+      .from("documentos")
+      .select("id, tipo, competencia, origem, status, status_processamento, arquivo_nome, arquivo_url, dados_extraidos, classificacao_ia, duplicata_de, recebido_em, empresa:empresa_id(id, razao_social), responsavel:responsavel_id(nome)", { count: "exact" })
+      .order("recebido_em", { ascending: false })
+      .range(from, to);
+    if (data.empresa_id) q = q.eq("empresa_id", data.empresa_id);
+    if (data.tipo) q = q.eq("tipo", data.tipo as Database["public"]["Enums"]["documento_tipo"]);
+    if (data.status) q = q.eq("status", data.status as Database["public"]["Enums"]["documento_status"]);
+    if (data.competencia) q = q.eq("competencia", data.competencia);
+    const { data: rows, error, count } = await q;
+    if (error) throw new Error(error.message);
+    return { items: rows ?? [], total: count ?? 0 };
+  });
+
+// Competências distintas dos documentos (via RPC) p/ o filtro da tela — todas as
+// competências reais, não só as das 500 linhas carregadas.
+export const getDocumentosCompetencias = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase.rpc("documentos_competencias");
+    // Resiliente: se a RPC ainda não foi aplicada, o filtro fica sem competências
+    // mas a tela NÃO quebra (o resto usa listDocumentosPaginado, que independe da RPC).
+    if (error) return [] as string[];
+    return (data ?? []).map((r) => r.competencia).filter(Boolean) as string[];
+  });
+
 const createDocSchema = z.object({
   empresa_id: z.string().uuid(),
   tipo: z.enum(["extrato", "nf_entrada", "nf_saida", "fatura_cartao", "recibo", "darf", "planilha_financeira", "movimento_contabil"]),
