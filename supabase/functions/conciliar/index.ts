@@ -4,11 +4,12 @@
 // movimentação ≈ saldo_final, tolerância ±R$0,01) e que toda movimentação do
 // extrato está classificada — ver saldo.ts (validarSaldo/detectarFaltantes).
 //
-// O pareamento por regras abaixo é mantido apenas como COMPAT temporário para
-// os painéis "conciliados"/"divergências" ainda em uso pela UI v2 (será
-// removido em #132, junto da limpeza de resultado.conciliados/divergencias_*).
-// A chamada à IA (Claude) para pareamento foi removida — não faz mais parte
-// do motor v3 (a classificação já acontece em processar-documento).
+// #132: pareamento D/C linha a linha REMOVIDO (era só compat da UI v2 — painéis
+// "conciliados"/"divergências" e conciliarParManual, já fora de uso). A chamada
+// à IA (Claude) para pareamento também já tinha sido removida (#130) — não faz
+// mais parte do motor v3 (a classificação já acontece em processar-documento).
+// `divergencias_count`/status "divergencias" (usados no dashboard/mestre) agora
+// refletem as pendências v3: saldo não confere (+1) e/ou faltantes (+N).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { detectarFaltantes, validarSaldo, type LancamentoConc, type LinhaExtrato } from "./saldo.ts";
@@ -127,12 +128,6 @@ function parseCsv(texto: string, anoFallback: number): Linha[] {
   return out;
 }
 
-const cents = (v: number) => Math.round(Math.abs(v) * 100);
-function diasEntre(a: string | null, b: string | null): number {
-  if (!a || !b) return 0; // sem data dos dois lados: não penaliza
-  return Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
-}
-
 // ---------------------------------------------------------------------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -177,7 +172,6 @@ Deno.serve(async (req) => {
     );
 
     const r = conc.resultado as {
-      conciliados_count?: number;
       saldo?: { confere?: boolean; motivo?: string };
       faltantes?: { faltantes_count?: number };
     } | null;
@@ -193,14 +187,13 @@ Deno.serve(async (req) => {
 
     const { error: finErr } = await admin
       .from("conciliacoes")
-      .update({ status: "concluida", concluido_em: new Date().toISOString() })
+      .update({ status: "concluida", divergencias_count: 0, concluido_em: new Date().toISOString() })
       .eq("id", conc.id);
     if (finErr) return fail(finErr.message);
     return json(200, {
       ok: true,
       modo: "finalizar",
       divergencias_count: 0,
-      conciliados: r?.conciliados_count ?? 0,
       status: "concluida",
     });
   }
@@ -273,31 +266,9 @@ Deno.serve(async (req) => {
   if (razao.length === 0) return fail("Não há lançamentos na razão desta competência. Processe um documento com IA antes de conciliar.");
   if (extrato.length === 0) return fail("Extrato sem linhas válidas (verifique o CSV).");
 
-  const usadoR = new Array(razao.length).fill(false);
-  const usadoE = new Array(extrato.length).fill(false);
-  const conciliados: { razao: Linha; extrato: Linha; fonte: string; motivo?: string }[] = [];
-
-  // 1) Pareamento por regras: mesmo valor (centavos) + |data| <= 3 dias
-  for (let i = 0; i < razao.length; i++) {
-    let best = -1, bestDias = Infinity;
-    for (let j = 0; j < extrato.length; j++) {
-      if (usadoE[j]) continue;
-      if (cents(razao[i].valor) !== cents(extrato[j].valor)) continue;
-      const d = diasEntre(razao[i].data, extrato[j].data);
-      if (d <= 3 && d < bestDias) { best = j; bestDias = d; }
-    }
-    if (best >= 0) {
-      usadoR[i] = true; usadoE[best] = true;
-      conciliados.push({ razao: razao[i], extrato: extrato[best], fonte: "regra" });
-    }
-  }
-
-  const divergencias_razao = razao.filter((_, i) => !usadoR[i]);
-  const divergencias_extrato = extrato.filter((_, i) => !usadoE[i]);
-  const divergencias_count = divergencias_razao.length + divergencias_extrato.length;
-
-  // Motor v3: saldo (inicial + movimentação ≈ final) e faltantes (extrato sem
-  // classificação / lançamento fonte_extrato sem CSV correspondente).
+  // Motor v3 (#132 — pareamento D/C linha a linha removido): saldo (inicial +
+  // movimentação ≈ final) e faltantes (extrato sem classificação / lançamento
+  // fonte_extrato sem CSV correspondente).
   const extratoLinhas: LinhaExtrato[] = extrato.map((l) => ({ data: l.data, descricao: l.descricao, valor: l.valor }));
   const saldo = validarSaldo({ saldoInicial, saldoFinal, extrato: extratoLinhas });
   const faltantes = detectarFaltantes({ extrato: extratoLinhas, lancamentos: lancamentosConc });
@@ -306,17 +277,14 @@ Deno.serve(async (req) => {
     gerado_em: new Date().toISOString(),
     total_razao: razao.length,
     total_extrato: extrato.length,
-    // Compat v2 (painéis de pareamento) — removido em #132.
-    conciliados_count: conciliados.length,
-    conciliados,
-    divergencias_razao,
-    divergencias_extrato,
-    // Motor v3 (docs/conciliacao-v3-spec.md).
     saldo,
     faltantes,
   };
 
+  // divergencias_count/status (dashboard, mestre.tsx, scoring de saúde do
+  // cliente) agora refletem pendências v3: saldo não confere (+1) + faltantes.
   // Análise: grava resultado; conclusão só via modo "finalizar".
+  const divergencias_count = (saldo.confere ? 0 : 1) + faltantes.faltantes_count;
   const novoStatus = divergencias_count === 0 ? "em_andamento" : "divergencias";
   const { error: upErr } = await admin
     .from("conciliacoes")
@@ -333,7 +301,6 @@ Deno.serve(async (req) => {
     ok: true,
     modo: "analisar",
     divergencias_count,
-    conciliados: conciliados.length,
     status: novoStatus,
     saldo,
     faltantes_count: faltantes.faltantes_count,

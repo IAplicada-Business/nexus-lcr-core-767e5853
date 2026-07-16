@@ -69,11 +69,10 @@ type Faltantes = {
   classificado_sem_extrato: LancFaltante[];
   faltantes_count: number;
 };
+// #132: pareamento D/C linha a linha removido (conciliados/divergencias_*).
+// Motor v3 (docs/conciliacao-v3-spec.md): só saldo + faltantes.
 type Resultado = {
-  total_razao: number; total_extrato: number; conciliados_count: number;
-  conciliados: { razao: Linha; extrato: Linha; fonte: string; motivo?: string }[];
-  divergencias_razao: Linha[]; divergencias_extrato: Linha[];
-  // Motor v3 (docs/conciliacao-v3-spec.md) — opcional pra compat com análises antigas.
+  total_razao: number; total_extrato: number;
   saldo?: ResultadoSaldo;
   faltantes?: Faltantes;
 } | null;
@@ -273,10 +272,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 
   const conc = data?.conciliacao ?? null;
   const resultado = (conc?.resultado ?? null) as Resultado;
-  // Compat v2 (painel de pareamento D/C) — exibição apenas, não trava mais
-  // (removido em #133; limpeza completa dos campos fica p/ #132).
-  const divCount = (resultado?.divergencias_razao.length ?? 0) + (resultado?.divergencias_extrato.length ?? 0);
-  // Motor v3 (#133 — Três travas): saldo confere + faltantes = 0.
+  // Motor v3 (#132/#133 — pareamento D/C removido): saldo confere + faltantes = 0.
   const saldoConfere = resultado?.saldo?.confere === true;
   const faltantesCount = resultado?.faltantes?.faltantes_count ?? 0;
   const temExtrato = !!conc?.extrato_csv_url;
@@ -456,7 +452,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 
   // Três travas (#133 — docs/conciliacao-v3-spec.md): Analisar exige revisão
   // zerada + extrato presente; Conciliar exige revisão zerada + saldo confere +
-  // faltantes = 0 + análise feita. Pareamento D/C (divCount) não trava mais.
+  // faltantes = 0 + análise feita. Pareamento D/C removido em #132 (não trava).
   const podeAnalisar = temExtrato && aRever === 0 && !busy;
   const podeFinalizar = temExtrato && aRever === 0 && !!resultado && saldoConfere && faltantesCount === 0 && !busy;
 
@@ -763,7 +759,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
             onExcluir={(id) => excluirLancamento(id, lancs.find((x) => x.id === id)?.descricao)}
           />
         )}
-        {resultado && divCount === 0 && conc?.status === "concluida" && (
+        {resultado && conc?.status === "concluida" && (
           <p className="mt-2 text-center text-sm text-emerald-700">Conciliação finalizada — nenhuma pendência.</p>
         )}
       </div>
@@ -830,33 +826,20 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
             </CardContent></Card>
           ) : (
             <div className="space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Mini label="Conciliados" value={resultado.conciliados_count} tone="ok" />
-                <Mini label="Divergências (razão)" value={resultado.divergencias_razao.length} tone="warn" />
-                <Mini label="Divergências (extrato)" value={resultado.divergencias_extrato.length} tone="warn" />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <SaldoMini label="Saldo inicial" value={resultado.saldo?.saldo_inicial ?? null} />
+                <SaldoMini label="Saldo final" value={resultado.saldo?.saldo_final ?? null} />
+                <SaldoMini label="Movimentação (D/C)" value={resultado.saldo?.movimentacao_liquida ?? null} signed />
+                <DeltaMini saldo={resultado.saldo} analisado={true} />
               </div>
 
-              <Secao titulo="O que foi conciliado" icon={<CheckCircle2 className="h-4 w-4 text-primary" />}>
-                <Table>
-                  <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Razão</TableHead><TableHead>Extrato</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Fonte</TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {resultado.conciliados.map((c, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-sm">{c.extrato.data ?? c.razao.data ?? "—"}</TableCell>
-                        <TableCell className="text-sm">{c.razao.descricao}</TableCell>
-                        <TableCell className="text-sm">{c.extrato.descricao}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{brl(Math.abs(c.extrato.valor))}</TableCell>
-                        <TableCell>
-                          {c.fonte === "ia"
-                            ? <span className="inline-flex items-center gap-1 text-xs text-primary" title={c.motivo}><Sparkles className="h-3 w-3" />IA</span>
-                            : <span className="text-xs text-muted-foreground">regra</span>}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {resultado.conciliados.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Nenhum item conciliado.</TableCell></TableRow>}
-                  </TableBody>
-                </Table>
-              </Secao>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+                <div className="flex items-center gap-2 text-sm text-emerald-800">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <span className="font-medium">Conciliação finalizada — saldo confere e nenhuma transação faltante.</span>
+                </div>
+                <span className="text-xs text-emerald-700">{resultado.total_razao} lançamento(s) na razão · {resultado.total_extrato} linha(s) no extrato</span>
+              </div>
             </div>
           )}
         </TabsContent>
@@ -1163,26 +1146,3 @@ function DocsSuporteCard({ empresaId, competencia }: { empresaId: string; compet
     </Card>
   );
 }
-
-function Mini({ label, value, tone }: { label: string; value: number; tone: "ok" | "warn" }) {
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className={`mt-2 font-display text-3xl ${tone === "warn" && value > 0 ? "text-destructive" : "text-foreground"}`}>{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Secao({ titulo, icon, children }: { titulo: string; icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <Card>
-      <div className="px-6 py-3 border-b border-border bg-muted/40 flex items-center gap-2">
-        {icon}<h3 className="font-display text-lg">{titulo}</h3>
-      </div>
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
-  );
-}
-
