@@ -12,6 +12,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { detectarFaltantes, validarSaldo, type LancamentoConc, type LinhaExtrato } from "./saldo.ts";
+import { avaliarTravaAnalisar, avaliarTravaFinalizar, contarRevisaoPendente } from "./travas.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -160,24 +161,36 @@ Deno.serve(async (req) => {
   if (!conc) return fail("Conciliação não encontrada.");
   if (!conc.extrato_csv_url) return fail("Importe o extrato bancário (CSV) antes de conciliar.");
 
-  // Finalização: exige análise prévia + travas v3 (saldo confere + sem
-  // faltantes) além da trava v2 (divergências de pareamento, mantida até #132).
+  // Finalização (#133 — Três travas): revisão zerada + saldo confere +
+  // faltantes = 0 + análise feita. Espelha exatamente podeFinalizar do front
+  // (conciliacao_.$empresaId.tsx) via avaliarTravaFinalizar (travas.ts). O
+  // pareamento D/C (divergencias_count) NÃO trava mais — removido da spec v3.
   if (modo === "finalizar") {
-    if (!conc.resultado) return fail("Analise as divergências antes de conciliar.");
-    const pend = conc.divergencias_count ?? 0;
-    if (pend > 0) return fail(`Existem ${pend} divergência(s) pendentes. Resolva antes de conciliar.`);
+    const { data: revRows, error: revErr } = await admin
+      .from("lancamentos")
+      .select("confidence, conta_id")
+      .eq("empresa_id", conc.empresa_id)
+      .eq("competencia", conc.competencia);
+    if (revErr) return fail(revErr.message);
+    const revisaoPendente = contarRevisaoPendente(
+      (revRows ?? []).map((r) => ({ confidence: r.confidence == null ? null : Number(r.confidence), contaId: (r.conta_id as string | null) ?? null })),
+    );
+
     const r = conc.resultado as {
       conciliados_count?: number;
       saldo?: { confere?: boolean; motivo?: string };
       faltantes?: { faltantes_count?: number };
-    };
-    if (r.saldo && r.saldo.confere !== true) {
-      return fail(r.saldo.motivo ?? "Saldo não confere. Verifique o extrato antes de conciliar.");
-    }
-    const faltantesCount = r.faltantes?.faltantes_count ?? 0;
-    if (faltantesCount > 0) {
-      return fail(`Existem ${faltantesCount} transação(ões) faltante(s) (extrato sem classificação ou lançamento sem extrato). Resolva antes de conciliar.`);
-    }
+    } | null;
+
+    const trava = avaliarTravaFinalizar({
+      analisado: !!conc.resultado,
+      revisaoPendente,
+      saldoConfere: r?.saldo?.confere ?? null,
+      saldoMotivo: r?.saldo?.motivo,
+      faltantesCount: r?.faltantes?.faltantes_count ?? 0,
+    });
+    if (!trava.ok) return fail(trava.motivo);
+
     const { error: finErr } = await admin
       .from("conciliacoes")
       .update({ status: "concluida", concluido_em: new Date().toISOString() })
@@ -187,7 +200,7 @@ Deno.serve(async (req) => {
       ok: true,
       modo: "finalizar",
       divergencias_count: 0,
-      conciliados: r.conciliados_count ?? 0,
+      conciliados: r?.conciliados_count ?? 0,
       status: "concluida",
     });
   }
@@ -203,12 +216,21 @@ Deno.serve(async (req) => {
   // Não há mais upload de "razão SCI": a razão é a tabela de lançamentos da tela.
   const { data: lancRows, error: lErr } = await admin
     .from("lancamentos")
-    .select("id, data_lancamento, valor, descricao, conta_id, fonte_extrato")
+    .select("id, data_lancamento, valor, descricao, conta_id, fonte_extrato, confidence")
     .eq("empresa_id", conc.empresa_id)
     .eq("competencia", conc.competencia)
     .not("valor", "is", null)
     .range(0, 4999);
   if (lErr) return fail(lErr.message);
+
+  // Trava 1 (#133): espelha podeAnalisar do front — revisão zerada + extrato
+  // presente (extrato já validado acima). avaliarTravaAnalisar centraliza a regra.
+  const revisaoPendenteAnalisar = contarRevisaoPendente(
+    (lancRows ?? []).map((r) => ({ confidence: r.confidence == null ? null : Number(r.confidence), contaId: (r.conta_id as string | null) ?? null })),
+  );
+  const travaAnalisar = avaliarTravaAnalisar({ temExtrato: true, revisaoPendente: revisaoPendenteAnalisar });
+  if (!travaAnalisar.ok) return fail(travaAnalisar.motivo);
+
   const razao: Linha[] = (lancRows ?? []).map((r) => ({
     id: r.id as string,
     data: r.data_lancamento ?? null,

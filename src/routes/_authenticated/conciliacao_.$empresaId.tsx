@@ -273,7 +273,12 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 
   const conc = data?.conciliacao ?? null;
   const resultado = (conc?.resultado ?? null) as Resultado;
+  // Compat v2 (painel de pareamento D/C) — exibição apenas, não trava mais
+  // (removido em #133; limpeza completa dos campos fica p/ #132).
   const divCount = (resultado?.divergencias_razao.length ?? 0) + (resultado?.divergencias_extrato.length ?? 0);
+  // Motor v3 (#133 — Três travas): saldo confere + faltantes = 0.
+  const saldoConfere = resultado?.saldo?.confere === true;
+  const faltantesCount = resultado?.faltantes?.faltantes_count ?? 0;
   const temExtrato = !!conc?.extrato_csv_url;
   const extratoInfo = (data as unknown as { extrato?: { id: string; arquivo_nome: string | null; recebido_em: string; saldo_inicial: number | null; saldo_final: number | null; movimentacao_debito?: number; movimentacao_credito?: number; movimentacao_liquida?: number } | null })?.extrato ?? null;
   const outrosLancs = (data as unknown as { outros_lancamentos?: number })?.outros_lancamentos ?? 0;
@@ -331,8 +336,13 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
       toast.error("Analise as divergências antes de conciliar.");
       return false;
     }
-    if (divCount > 0) {
-      toast.error(`Existem ${divCount} divergência(s) pendentes. Resolva antes de conciliar.`);
+    if (!saldoConfere) {
+      toast.error(resultado.saldo?.motivo ?? "Saldo não confere. Verifique o extrato antes de conciliar.");
+      scrollParaDivergencias();
+      return false;
+    }
+    if (faltantesCount > 0) {
+      toast.error(`Existem ${faltantesCount} transação(ões) faltante(s). Resolva antes de conciliar.`);
       scrollParaDivergencias();
       return false;
     }
@@ -444,8 +454,11 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
     } finally { setActing(false); }
   }
 
+  // Três travas (#133 — docs/conciliacao-v3-spec.md): Analisar exige revisão
+  // zerada + extrato presente; Conciliar exige revisão zerada + saldo confere +
+  // faltantes = 0 + análise feita. Pareamento D/C (divCount) não trava mais.
   const podeAnalisar = temExtrato && aRever === 0 && !busy;
-  const podeFinalizar = temExtrato && aRever === 0 && divCount === 0 && !!resultado && !busy;
+  const podeFinalizar = temExtrato && aRever === 0 && !!resultado && saldoConfere && faltantesCount === 0 && !busy;
 
   return (
     <>
@@ -570,7 +583,13 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
                   disabled={!podeFinalizar}
                   onClick={finalizarConciliacao}
                   className={cn("h-8 rounded-full", !podeFinalizar && "bg-muted text-muted-foreground hover:bg-muted")}
-                  title={divCount > 0 ? `${divCount} divergência(s) pendentes` : (!resultado ? "Analise primeiro" : "Finalizar conciliação")}
+                  title={
+                    aRever > 0 ? `${aRever} lançamento(s) pendentes de revisão`
+                      : !resultado ? "Analise as divergências primeiro"
+                      : !saldoConfere ? (resultado.saldo?.motivo ?? "Saldo não confere")
+                      : faltantesCount > 0 ? `${faltantesCount} transação(ões) faltante(s) pendente(s)`
+                      : "Finalizar conciliação"
+                  }
                 >
                   <Wand2 className="mr-1 h-3.5 w-3.5" />{busy === "finalizar" ? "Conciliando…" : "Conciliar"}
                 </Button>
@@ -801,9 +820,11 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
           ) : conc?.status !== "concluida" ? (
             <Card><CardContent className="py-10 text-center space-y-3">
               <p className="text-muted-foreground">
-                {divCount > 0
-                  ? `${divCount} divergência(s) pendente(s) — resolva na aba Lançamentos e clique em Conciliar.`
-                  : "Análise concluída — clique em Conciliar na aba Lançamentos para finalizar."}
+                {!saldoConfere
+                  ? (resultado.saldo?.motivo ?? "Saldo não confere") + " — resolva na aba Lançamentos e clique em Conciliar."
+                  : faltantesCount > 0
+                    ? `${faltantesCount} transação(ões) faltante(s) — resolva na aba Lançamentos e clique em Conciliar.`
+                    : "Análise concluída — clique em Conciliar na aba Lançamentos para finalizar."}
               </p>
               <Button variant="outline" onClick={() => setSubtab("lancamentos")}>Ir para Lançamentos</Button>
             </CardContent></Card>
