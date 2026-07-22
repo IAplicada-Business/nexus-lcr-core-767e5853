@@ -6,6 +6,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { TODAS_CHAVES } from "@/lib/acessos";
 import { paginarTodas } from "@/lib/paginar";
 import { compararClassificacao } from "@/lib/sci-xls";
+import { extrairSaldosDocumento } from "@/lib/saldo-extracao";
 
 async function assertAdmin(supabase: SupabaseClient<Database>, userId: string) {
   const { data } = await supabase.from("usuarios_perfil").select("perfil").eq("user_id", userId).maybeSingle();
