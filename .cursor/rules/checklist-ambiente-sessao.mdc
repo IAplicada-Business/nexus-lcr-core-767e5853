@@ -12,29 +12,15 @@ Antes de montar um plano ou começar a implementar algo não-trivial, confirme:
 1. **Fonte de requisitos**: se o pedido vem de uma reunião/transcrição, peça a
    transcrição completa (não só o resumo) antes de montar o plano — resumos
    perdem decisões que geram retrabalho depois.
-2. **Documentação vs. realidade**: docs como `docs/ARQUITETURA.md` podem estar
-   desatualizadas (ex.: descreve n8n/Docker, mas a VPS roda systemd + Python
-   direto). Ao tocar em infra/pipeline, confirme a realidade (SSH, `systemctl
-   status`, `crontab -l`, ler o código-fonte) antes de confiar só na doc.
+2. **Documentação vs. realidade**: docs como `docs/ARQUITETURA.md` (branch
+   `automation` do repo `mmarques30/lcr-flow`) podem estar desatualizadas (ex.:
+   descreve n8n/Docker, mas a VPS roda systemd + Python direto). Ao tocar em
+   infra/pipeline, confirme a realidade (SSH, `systemctl status`, `crontab -l`,
+   ler o código-fonte) antes de confiar só na doc.
 3. **Qual frontend o cliente usa de fato**: existem dois frontends síncronos com
-   o mesmo `main` do GitHub — Vercel (dev/teste) e **Lovable**
-   (`nexus-lcr-core.lovable.app`, usado pelo cliente). Ao validar uma mudança
-   "para o cliente", teste no Lovable, não só no Vercel.
-   ⚠️ **22/07: 2ª troca de repositório.** O repo passou por
-   `mmarques30/lcr-flow` → `IAplicada-Business/lcr-flow` (transferência de org,
-   21/07) → **`IAplicada-Business/nexus-lcr-core-767e5853`** (22/07, criado
-   automaticamente pelo Lovable ao reconectar Git Sync após a transferência —
-   ver `docs.lovable.dev/integrations/git-sync-overview`: reconectar após mover
-   um repo **sempre cria um repo novo**, não há como "reconectar" ao antigo).
-   Nesse processo esse repo novo também foi **unificado**: recebeu o conteúdo
-   do repo Python da VPS (`scripts/`, `config/`, `docker-compose.yml`,
-   `requirements.txt`, `n8n/` etc., antes na branch `automation` do
-   `lcr-flow`) direto na raiz, ao lado do front (`src/`, `supabase/`). Ou seja:
-   **hoje existe 1 repo só, com front + automação juntos, tudo na branch
-   `main`.** Confirme com `git remote -v` (deve apontar pra
-   `nexus-lcr-core-767e5853`) antes de commitar/push — e verifique se o Vercel
-   já foi reapontado pro repo novo (não verificado via `gh api` sem acesso ao
-   projeto Vercel; perguntar à Mariana/admin).
+   o mesmo `main` do GitHub (`mmarques30/lcr-flow`) — Vercel (dev/teste) e
+   **Lovable** (`nexus-lcr-core.lovable.app`, usado pelo cliente). Ao validar
+   uma mudança "para o cliente", teste no Lovable, não só no Vercel.
 4. **Permissões de admin/deploy**: antes de propor automação de deploy (deploy
    key, GitHub Actions, etc.), confirme se você tem permissão de admin no repo
    — colaborador sem admin não consegue cadastrar deploy keys/secrets.
@@ -48,18 +34,8 @@ Antes de montar um plano ou começar a implementar algo não-trivial, confirme:
    pendentes de revisão (confiança ≥ 80% e conta atribuída). Dados reais de
    cliente quase sempre têm pendências — não assuma que qualquer cliente/mês
    serve para esse teste.
-7. **`LCR` e `LCR-front` NÃO são mais worktrees (mudou em 22/07)**:
-   `D:\IAPLICADA\LCR` e `D:\IAPLICADA\LCR-front` eram worktrees do mesmo
-   `.git` (branches `automation` e `main`). Após a unificação do repo (item 3),
-   isso foi desfeito — cada pasta agora é um **clone independente** do mesmo
-   repo `nexus-lcr-core-767e5853`, ambas na branch `main` (não dá mais pra ter
-   a mesma branch aberta em dois worktrees de um repo só, e agora só existe
-   `main`). Confirme com `git remote -v` em cada pasta antes de assumir
-   qualquer coisa — e lembre que, sendo clones independentes, um `git pull`
-   numa pasta não atualiza a outra automaticamente.
-   **Convenção decidida em 22/07** (pra evitar drift entre os dois clones):
-   `LCR` é o diretório canônico pra **git** (commit/push a partir daqui);
-   `LCR-front` existe só como conveniência pra **rodar o front localmente**
-   (`npm run dev` / `npm run test`), porque já tem `node_modules` instalado —
-   antes de rodar algo nele, faça `git pull` pra garantir que não está
-   desatualizado, e evite commitar a partir dele.
+7. **Múltiplos worktrees**: `D:\IAPLICADA\LCR` (branch `automation`) e
+   `D:\IAPLICADA\LCR-front` (branch `feat/conciliacao-v3`) são **worktrees do
+   mesmo repositório** `mmarques30/lcr-flow`, não repos independentes. Confirme
+   com `git remote -v` e `git worktree list` antes de assumir o contrário —
+   e lembre que arquivos podem existir numa branch e não na outra.
