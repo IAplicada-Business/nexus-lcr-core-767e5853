@@ -26,7 +26,7 @@ export function extrairSaldosDeTexto(texto: string): { inicial: number | null; f
 
   // "Saldo inicial|anterior|abertura [(DD/MM)]: R$ X" (também aceita "é R$")
   const reInicial = new RegExp(
-    String.raw`saldo\s+(?:inicial|anterior|abertura)${DATA_OPC}\s*(?:[:=\-]|\bé\b)?\s*R?\$?\s*${NUM}`,
+    String.raw`saldo\s+(?:inicial|anterior|abertura)${DATA_OPC}\s*(?:[:=\-]\s*|é\s+)?R?\$?\s*${NUM}`,
     "i",
   );
   const mi = texto.match(reInicial);
@@ -34,7 +34,7 @@ export function extrairSaldosDeTexto(texto: string): { inicial: number | null; f
 
   // "Saldo final|atual [(DD/MM)]: R$ X" (também aceita "é R$")
   const reFinal = new RegExp(
-    String.raw`saldo\s+(?:final|atual)${DATA_OPC}\s*(?:[:=\-]|\bé\b)?\s*R?\$?\s*${NUM}`,
+    String.raw`saldo\s+(?:final|atual)${DATA_OPC}\s*(?:[:=\-]\s*|é\s+)?R?\$?\s*${NUM}`,
     "i",
   );
   const mf = texto.match(reFinal);
