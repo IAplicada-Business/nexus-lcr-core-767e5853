@@ -390,7 +390,7 @@ export function PlanilhaSciTab({ empresaId, empresaNome, competencia }: { empres
     ? { ...l, historico: { ...l.historico, pula_complemento: true } }
     : l);
 
-  const previewRows = linhasSciPreview(lancsComPula, bancoCodigo, pdcApelidos, bancoNome, pdcTC);
+  const previewRows = linhasSciPreview(lancsComPula, bancoCodigo, bancoNome, pdcTC);
 
   // #135: Baixar SCI só libera depois da conciliação bancária concluída
   // (docs/conciliacao-v3-spec.md — "Conciliar desbloqueia Baixar SCI").
