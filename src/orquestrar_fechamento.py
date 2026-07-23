@@ -37,6 +37,7 @@ from orquestrar import (  # noqa: E402
 
 OUT_DIR = ROOT / "outputs" / "orquestracao"
 LEDGER = OUT_DIR / "fechamento-processadas.json"
+AVISOS = OUT_DIR / "fechamento-avisos.jsonl"
 FASE0 = ROOT / "outputs" / "fechamento" / "fase0-descoberta.json"
 GESTTA_SEARCH = "https://api.gestta.com.br/core/customer/task/search"
 
@@ -155,6 +156,21 @@ def marcar_processada_fechamento(gestta_task_id: str, meta: dict):
     LEDGER.write_text(json.dumps(led, ensure_ascii=False, indent=0), encoding="utf-8")
 
 
+def registrar_aviso_fechamento(tarefa_id: str, codigo: str, nome: str, status: str, motivo: str):
+    """Registra aviso persistente para empresas não cadastradas / match ambíguo."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    linha = {
+        "taskId": tarefa_id,
+        "codigo": codigo,
+        "nome": nome,
+        "status": status,
+        "motivo": motivo,
+        "em": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    with AVISOS.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(linha, ensure_ascii=False) + "\n")
+
+
 def resolver_empresa_fechamento(codigo: str, nome: str):
     codigo = (codigo or "").strip()
     nome = (nome or "").strip()
@@ -224,10 +240,23 @@ def processar_tarefa_fechamento(t: dict, jwt_gestta: str) -> dict:
 
     empresa = t.get("_empresa")
     if isinstance(empresa, dict) and empresa.get("_ambiguo"):
-        return {**base, "status": "match_ambiguo", "motivo": f"match ambíguo para '{codigo or nome}'"}
+        motivo = f"match ambíguo para '{codigo or nome}' — cadastre codigo_gestta no Supabase"
+        marcar_processada_fechamento(tarefa_id, {
+            "status": "match_ambiguo",
+            "cliente": codigo or nome,
+            "motivo": motivo,
+        })
+        registrar_aviso_fechamento(tarefa_id, codigo, nome, "match_ambiguo", motivo)
+        return {**base, "status": "match_ambiguo", "motivo": motivo, "aviso": True}
     if not empresa:
-        return {**base, "status": "sem_empresa",
-                "motivo": f"empresa não encontrada no Supabase ('{codigo or nome}')"}
+        motivo = f"empresa não cadastrada no Supabase (código Gestta: '{codigo or '?'}')"
+        marcar_processada_fechamento(tarefa_id, {
+            "status": "sem_empresa",
+            "cliente": codigo or nome,
+            "motivo": motivo,
+        })
+        registrar_aviso_fechamento(tarefa_id, codigo, nome, "sem_empresa", motivo)
+        return {**base, "status": "sem_empresa", "motivo": motivo, "aviso": True}
 
     empresa_id = empresa["id"]
     base["empresa_id"] = empresa_id
@@ -329,8 +358,11 @@ def main():
                 r = processar_tarefa_fechamento(t, jwt_gestta)
             else:
                 r = {"status": "erro", "motivo": str(e)[:400], "tarefa_id": t.get("taskId")}
-        log(f"    → {r.get('status')} {r.get('motivo') or ''}"
-            + (f" D=C={r.get('dc_ok')}" if "dc_ok" in r else ""))
+        if r.get("aviso"):
+            log(f"    ⚠️ AVISO: {r.get('status')} — {r.get('motivo')}")
+        else:
+            log(f"    → {r.get('status')} {r.get('motivo') or ''}"
+                + (f" D=C={r.get('dc_ok')}" if "dc_ok" in r else ""))
         resultados.append(r)
         if args.pausa and i < len(tarefas):
             time.sleep(args.pausa)

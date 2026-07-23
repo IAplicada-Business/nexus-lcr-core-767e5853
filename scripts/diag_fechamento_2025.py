@@ -29,6 +29,7 @@ def analisar(statuses: list[str]) -> dict:
     por_task = {b["gestta_task_id"]: b for b in balancetes if b.get("gestta_task_id")}
 
     sem_empresa = []
+    avisos_pulados = []
     nao_proc = []
     proc = []
     status_counter = Counter()
@@ -37,29 +38,38 @@ def analisar(statuses: list[str]) -> dict:
         tid = t.get("taskId")
         cod = t.get("clienteCodigo") or ""
         nome = t.get("clienteNome") or ""
+        if ja_processada_fechamento(tid):
+            led = ledger.get(tid) or {}
+            if led.get("status") in ("sem_empresa", "match_ambiguo"):
+                avisos_pulados.append({
+                    "codigo": cod, "nome": nome, "taskId": tid,
+                    "status": led.get("status"), "motivo": led.get("motivo"),
+                })
+                continue
+            row = por_task.get(tid) or {}
+            st = row.get("status") or led.get("status") or "ledger"
+            status_counter[st] += 1
+            proc.append({"codigo": cod, "taskId": tid, "status": st, "dc_ok": row.get("dc_ok")})
+            continue
         emp = resolver_empresa_fechamento(cod, nome)
         if emp is None or (isinstance(emp, dict) and emp.get("_ambiguo")):
             sem_empresa.append({"codigo": cod, "nome": nome, "taskId": tid})
             continue
-        if ja_processada_fechamento(tid):
-            row = por_task.get(tid) or {}
-            st = row.get("status") or "ledger"
-            status_counter[st] += 1
-            proc.append({"codigo": cod, "taskId": tid, "status": st, "dc_ok": row.get("dc_ok")})
-        else:
-            nao_proc.append({"codigo": cod, "nome": nome, "taskId": tid})
+        nao_proc.append({"codigo": cod, "nome": nome, "taskId": tid})
 
     return {
         "gestta_total": len(tarefas),
         "processadas": len(proc),
         "nao_processadas": len(nao_proc),
         "sem_empresa_ou_ambiguo": len(sem_empresa),
+        "avisos_pulados": len(avisos_pulados),
         "ledger_keys": len(ledger),
         "balancetes_supabase": len(balancetes),
         "status_processados": dict(status_counter),
         "dc_ok": sum(1 for p in proc if p.get("dc_ok") is True),
         "amostra_pendentes": nao_proc[:15],
         "amostra_sem_empresa": sem_empresa[:10],
+        "amostra_avisos_pulados": avisos_pulados[:10],
     }
 
 

@@ -91,7 +91,7 @@ def main():
         sem_emp = c.get("sem_empresa", 0) + c.get("match_ambiguo", 0)
         incompleta = c.get("incompleta", 0)
         pulada = c.get("pulada_idempotencia", 0)
-        progresso = ok + parcial
+        progresso = ok + parcial + sem_emp
         total = res.get("total_tarefas")
 
         tot_ok += ok
@@ -116,13 +116,13 @@ def main():
             if sem_progresso >= 3:
                 try:
                     from orquestrar import relogin_gestta  # noqa: WPS433
-                    log("3 lotes sem ok/parcial — tentando relogin Gestta...")
+                    log("3 lotes sem avanço na fila — tentando relogin Gestta...")
                     if relogin_gestta():
                         sem_progresso = 0
                         continue
                 except Exception as e:
                     log(f"relogin falhou: {str(e)[:120]}")
-                log(f"⏹️ FIM: 3 lotes sem progresso (ok+parcial). sem_empresa={tot_sem} erro={tot_erro}")
+                log(f"⏹️ FIM: 3 lotes sem avanço (ok/parcial/sem_empresa). sem_empresa={tot_sem} erro={tot_erro}")
                 break
         else:
             sem_progresso = 0
