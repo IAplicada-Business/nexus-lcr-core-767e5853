@@ -953,6 +953,71 @@ export const listConciliacoes = createServerFn({ method: "GET" })
     return { competencia, empresas: data ?? [] };
   });
 
+/** Fechamento anual 2025 — portfolio de balancetes (tabela `balancetes` quando migration aplicada). */
+export const listFechamentos = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const metaTotal = 682;
+    try {
+      const { data, error } = await context.supabase
+        .from("balancetes")
+        .select("id, empresa_id, status, debitos_total, creditos_total, dc_ok, gestta_task_id, created_at")
+        .eq("exercicio", 2025)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const byEmp = new Map<string, typeof data>();
+      for (const row of data ?? []) {
+        const list = byEmp.get(row.empresa_id) ?? [];
+        list.push(row);
+        byEmp.set(row.empresa_id, list);
+      }
+      if (byEmp.size === 0) return { metaTotal, empresas: [] as unknown[] };
+
+      const ids = [...byEmp.keys()];
+      const { data: emps, error: e2 } = await context.supabase
+        .from("empresas")
+        .select("id, razao_social, nome_fantasia, codigo_gestta")
+        .in("id", ids)
+        .order("razao_social");
+      if (e2) throw e2;
+      const empresas = (emps ?? []).map((e) => ({
+        ...e,
+        fechamentos: byEmp.get(e.id) ?? [],
+      }));
+      return { metaTotal, empresas };
+    } catch {
+      return { metaTotal, empresas: [] as unknown[] };
+    }
+  });
+
+export const getFechamentoCliente = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ empresa_id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const { data: empresa, error: e1 } = await context.supabase
+      .from("empresas")
+      .select("id, razao_social, nome_fantasia, codigo_gestta")
+      .eq("id", data.empresa_id)
+      .maybeSingle();
+    if (e1) throw new Error(e1.message);
+    if (!empresa) throw new Error("Empresa não encontrada");
+
+    try {
+      const { data: balancete, error: e2 } = await context.supabase
+        .from("balancetes")
+        .select("id, status, debitos_total, creditos_total, dc_ok, gestta_task_id, balancete_url, conciliacoes_url, created_at")
+        .eq("empresa_id", data.empresa_id)
+        .eq("exercicio", 2025)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (e2) throw e2;
+      return { empresa, balancete };
+    } catch {
+      return { empresa, balancete: null };
+    }
+  });
+
 // Conciliação sobre lançamentos reais (TO-BE · Tarefa 7) — lista os lançamentos
 // individuais da empresa/competência com conta/histórico e flags de revisão.
 function chaveMetaClassificacao(data: string | null | undefined, valor: number | null | undefined, descricao: string | null | undefined): string {

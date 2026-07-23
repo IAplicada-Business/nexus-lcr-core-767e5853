@@ -2,7 +2,7 @@ import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard, Building2, ListChecks, Settings, LogOut, PanelLeftClose, PanelLeftOpen,
   Brain, LineChart, HeartHandshake, Compass, Users, ListTree, ChevronDown, Bell, UserPen, Camera,
-  History, Check, ChevronRight, Search, Activity, Info, SlidersHorizontal, Lightbulb, type LucideIcon,
+  History, Check, ChevronRight, Search, Activity, Info, SlidersHorizontal, Lightbulb, Scale, type LucideIcon,
 } from "lucide-react";
 import { LcrLogo } from "./brand";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -109,6 +109,7 @@ const NAV: NavItem[] = [
   { group: "Carteira", icon: Building2, itens: [
     { to: "/clientes", label: "Clientes", icon: Building2, acesso: "clientes" },
     { to: "/tarefas",  label: "Tarefas",  icon: ListChecks, acesso: "tarefas" },
+    { to: "/fechamento", label: "Balancetes (Fechamento)", icon: Scale, acesso: "fechamento" },
   ] },
   { group: "Cérebro LCR", icon: Brain, itens: [
     { to: "/cx", label: "SOS", icon: HeartHandshake, acesso: "cx" },
@@ -180,6 +181,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/documentos": "Documentos",
   "/lancamentos": "Lançamentos",
   "/conciliacao": "Conciliação",
+  "/fechamento": "Balancetes (Fechamento)",
   "/gestao/logs": "Logs de uso",
   "/gestao/oportunidades": "Oportunidades",
 };
@@ -192,6 +194,7 @@ function tituloDaRota(pathname: string): string {
     if (pathname.includes("/cx/")) return "Cliente · SOS";
     if (pathname.includes("/consultive/")) return "Cliente · Consultivo";
     if (pathname.includes("/conciliacao/")) return "Conciliação · Cliente";
+    if (pathname.includes("/fechamento/")) return "Balancete · Fechamento";
     return ROUTE_TITLES[root];
   }
   return "LCR";
@@ -352,7 +355,7 @@ export function AppShell({ children, userName, userRole, userAvatar, acessos }: 
   // Trilha de navegação: cada troca de tela vira evento em logs_uso —
   // alimenta a análise de acessos/tempo por tela em /gestao/logs.
   useEffect(() => {
-    const clienteId = /^\/(clientes|conciliacao|consultive|cx)\//.test(pathname)
+    const clienteId = /^\/(clientes|conciliacao|fechamento|consultive|cx)\//.test(pathname)
       ? pathname.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] ?? null
       : null;
     void trackAction(clienteId ? "viu_cliente" : "acessou_tela", { clienteId, tela: pathname });

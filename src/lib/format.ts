@@ -97,6 +97,13 @@ export const CONCILIACAO_STATUS_LABEL: Record<string, string> = {
   concluida: "Concluída",
 };
 
+export const FECHAMENTO_STATUS_LABEL: Record<string, string> = {
+  ok: "OK",
+  parcial: "Parcial",
+  incompleto: "Incompleto",
+  sem_cadastro: "Sem cadastro",
+};
+
 export const LANCAMENTO_STATUS_LABEL: Record<string, string> = {
   gerada: "Planilha gerada",
   upload_leveldrive: "No LevelDrive",

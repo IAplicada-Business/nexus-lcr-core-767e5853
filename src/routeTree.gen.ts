@@ -21,6 +21,7 @@ import { Route as AuthenticatedConfiguracoesRouteImport } from './routes/_authen
 import { Route as AuthenticatedConsultiveRouteImport } from './routes/_authenticated/consultive'
 import { Route as AuthenticatedCxRouteImport } from './routes/_authenticated/cx'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
+import { Route as AuthenticatedFechamentoRouteImport } from './routes/_authenticated/fechamento'
 import { Route as AuthenticatedHistoricoRouteImport } from './routes/_authenticated/historico'
 import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated/knowledge'
 import { Route as AuthenticatedLancamentosRouteImport } from './routes/_authenticated/lancamentos'
@@ -30,6 +31,7 @@ import { Route as AuthenticatedClientesIdRouteImport } from './routes/_authentic
 import { Route as AuthenticatedConciliacaoEmpresaIdRouteImport } from './routes/_authenticated/conciliacao_.$empresaId'
 import { Route as AuthenticatedConsultiveEmpresaIdRouteImport } from './routes/_authenticated/consultive_.$empresaId'
 import { Route as AuthenticatedCxEmpresaIdRouteImport } from './routes/_authenticated/cx_.$empresaId'
+import { Route as AuthenticatedFechamentoEmpresaIdRouteImport } from './routes/_authenticated/fechamento_.$empresaId'
 import { Route as AuthenticatedGestaoLogsRouteImport } from './routes/_authenticated/gestao.logs'
 import { Route as AuthenticatedGestaoOportunidadesRouteImport } from './routes/_authenticated/gestao.oportunidades'
 import { Route as AuthenticatedRevisarDocumentoIdRouteImport } from './routes/_authenticated/revisar.$documentoId'
@@ -96,6 +98,11 @@ const AuthenticatedDocumentosRoute = AuthenticatedDocumentosRouteImport.update({
   path: '/documentos',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedFechamentoRoute = AuthenticatedFechamentoRouteImport.update({
+  id: '/fechamento',
+  path: '/fechamento',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedHistoricoRoute = AuthenticatedHistoricoRouteImport.update({
   id: '/historico',
   path: '/historico',
@@ -145,6 +152,12 @@ const AuthenticatedCxEmpresaIdRoute =
     path: '/cx/$empresaId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedFechamentoEmpresaIdRoute =
+  AuthenticatedFechamentoEmpresaIdRouteImport.update({
+    id: '/fechamento_/$empresaId',
+    path: '/fechamento/$empresaId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedGestaoLogsRoute = AuthenticatedGestaoLogsRouteImport.update({
   id: '/gestao/logs',
   path: '/gestao/logs',
@@ -181,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/consultive': typeof AuthenticatedConsultiveRoute
   '/cx': typeof AuthenticatedCxRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
+  '/fechamento': typeof AuthenticatedFechamentoRoute
   '/historico': typeof AuthenticatedHistoricoRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/lancamentos': typeof AuthenticatedLancamentosRoute
@@ -190,6 +204,7 @@ export interface FileRoutesByFullPath {
   '/conciliacao/$empresaId': typeof AuthenticatedConciliacaoEmpresaIdRoute
   '/consultive/$empresaId': typeof AuthenticatedConsultiveEmpresaIdRoute
   '/cx/$empresaId': typeof AuthenticatedCxEmpresaIdRoute
+  '/fechamento/$empresaId': typeof AuthenticatedFechamentoEmpresaIdRoute
   '/gestao/logs': typeof AuthenticatedGestaoLogsRoute
   '/gestao/oportunidades': typeof AuthenticatedGestaoOportunidadesRoute
   '/revisar/$documentoId': typeof AuthenticatedRevisarDocumentoIdRoute
@@ -207,6 +222,7 @@ export interface FileRoutesByTo {
   '/consultive': typeof AuthenticatedConsultiveRoute
   '/cx': typeof AuthenticatedCxRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
+  '/fechamento': typeof AuthenticatedFechamentoRoute
   '/historico': typeof AuthenticatedHistoricoRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/lancamentos': typeof AuthenticatedLancamentosRoute
@@ -216,6 +232,7 @@ export interface FileRoutesByTo {
   '/conciliacao/$empresaId': typeof AuthenticatedConciliacaoEmpresaIdRoute
   '/consultive/$empresaId': typeof AuthenticatedConsultiveEmpresaIdRoute
   '/cx/$empresaId': typeof AuthenticatedCxEmpresaIdRoute
+  '/fechamento/$empresaId': typeof AuthenticatedFechamentoEmpresaIdRoute
   '/gestao/logs': typeof AuthenticatedGestaoLogsRoute
   '/gestao/oportunidades': typeof AuthenticatedGestaoOportunidadesRoute
   '/revisar/$documentoId': typeof AuthenticatedRevisarDocumentoIdRoute
@@ -235,6 +252,7 @@ export interface FileRoutesById {
   '/_authenticated/consultive': typeof AuthenticatedConsultiveRoute
   '/_authenticated/cx': typeof AuthenticatedCxRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
+  '/_authenticated/fechamento': typeof AuthenticatedFechamentoRoute
   '/_authenticated/historico': typeof AuthenticatedHistoricoRoute
   '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
   '/_authenticated/lancamentos': typeof AuthenticatedLancamentosRoute
@@ -244,6 +262,7 @@ export interface FileRoutesById {
   '/_authenticated/conciliacao_/$empresaId': typeof AuthenticatedConciliacaoEmpresaIdRoute
   '/_authenticated/consultive_/$empresaId': typeof AuthenticatedConsultiveEmpresaIdRoute
   '/_authenticated/cx_/$empresaId': typeof AuthenticatedCxEmpresaIdRoute
+  '/_authenticated/fechamento_/$empresaId': typeof AuthenticatedFechamentoEmpresaIdRoute
   '/_authenticated/gestao/logs': typeof AuthenticatedGestaoLogsRoute
   '/_authenticated/gestao/oportunidades': typeof AuthenticatedGestaoOportunidadesRoute
   '/_authenticated/revisar/$documentoId': typeof AuthenticatedRevisarDocumentoIdRoute
@@ -263,6 +282,7 @@ export interface FileRouteTypes {
     | '/consultive'
     | '/cx'
     | '/documentos'
+    | '/fechamento'
     | '/historico'
     | '/knowledge'
     | '/lancamentos'
@@ -272,6 +292,7 @@ export interface FileRouteTypes {
     | '/conciliacao/$empresaId'
     | '/consultive/$empresaId'
     | '/cx/$empresaId'
+    | '/fechamento/$empresaId'
     | '/gestao/logs'
     | '/gestao/oportunidades'
     | '/revisar/$documentoId'
@@ -289,6 +310,7 @@ export interface FileRouteTypes {
     | '/consultive'
     | '/cx'
     | '/documentos'
+    | '/fechamento'
     | '/historico'
     | '/knowledge'
     | '/lancamentos'
@@ -298,6 +320,7 @@ export interface FileRouteTypes {
     | '/conciliacao/$empresaId'
     | '/consultive/$empresaId'
     | '/cx/$empresaId'
+    | '/fechamento/$empresaId'
     | '/gestao/logs'
     | '/gestao/oportunidades'
     | '/revisar/$documentoId'
@@ -316,6 +339,7 @@ export interface FileRouteTypes {
     | '/_authenticated/consultive'
     | '/_authenticated/cx'
     | '/_authenticated/documentos'
+    | '/_authenticated/fechamento'
     | '/_authenticated/historico'
     | '/_authenticated/knowledge'
     | '/_authenticated/lancamentos'
@@ -325,6 +349,7 @@ export interface FileRouteTypes {
     | '/_authenticated/conciliacao_/$empresaId'
     | '/_authenticated/consultive_/$empresaId'
     | '/_authenticated/cx_/$empresaId'
+    | '/_authenticated/fechamento_/$empresaId'
     | '/_authenticated/gestao/logs'
     | '/_authenticated/gestao/oportunidades'
     | '/_authenticated/revisar/$documentoId'
@@ -424,6 +449,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDocumentosRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fechamento': {
+      id: '/_authenticated/fechamento'
+      path: '/fechamento'
+      fullPath: '/fechamento'
+      preLoaderRoute: typeof AuthenticatedFechamentoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/historico': {
       id: '/_authenticated/historico'
       path: '/historico'
@@ -487,6 +519,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCxEmpresaIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fechamento_/$empresaId': {
+      id: '/_authenticated/fechamento_/$empresaId'
+      path: '/fechamento/$empresaId'
+      fullPath: '/fechamento/$empresaId'
+      preLoaderRoute: typeof AuthenticatedFechamentoEmpresaIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/gestao/logs': {
       id: '/_authenticated/gestao/logs'
       path: '/gestao/logs'
@@ -527,6 +566,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedConsultiveRoute: typeof AuthenticatedConsultiveRoute
   AuthenticatedCxRoute: typeof AuthenticatedCxRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
+  AuthenticatedFechamentoRoute: typeof AuthenticatedFechamentoRoute
   AuthenticatedHistoricoRoute: typeof AuthenticatedHistoricoRoute
   AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
   AuthenticatedLancamentosRoute: typeof AuthenticatedLancamentosRoute
@@ -536,6 +576,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedConciliacaoEmpresaIdRoute: typeof AuthenticatedConciliacaoEmpresaIdRoute
   AuthenticatedConsultiveEmpresaIdRoute: typeof AuthenticatedConsultiveEmpresaIdRoute
   AuthenticatedCxEmpresaIdRoute: typeof AuthenticatedCxEmpresaIdRoute
+  AuthenticatedFechamentoEmpresaIdRoute: typeof AuthenticatedFechamentoEmpresaIdRoute
   AuthenticatedGestaoLogsRoute: typeof AuthenticatedGestaoLogsRoute
   AuthenticatedGestaoOportunidadesRoute: typeof AuthenticatedGestaoOportunidadesRoute
   AuthenticatedRevisarDocumentoIdRoute: typeof AuthenticatedRevisarDocumentoIdRoute
@@ -551,6 +592,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedConsultiveRoute: AuthenticatedConsultiveRoute,
   AuthenticatedCxRoute: AuthenticatedCxRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
+  AuthenticatedFechamentoRoute: AuthenticatedFechamentoRoute,
   AuthenticatedHistoricoRoute: AuthenticatedHistoricoRoute,
   AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
   AuthenticatedLancamentosRoute: AuthenticatedLancamentosRoute,
@@ -561,6 +603,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedConciliacaoEmpresaIdRoute,
   AuthenticatedConsultiveEmpresaIdRoute: AuthenticatedConsultiveEmpresaIdRoute,
   AuthenticatedCxEmpresaIdRoute: AuthenticatedCxEmpresaIdRoute,
+  AuthenticatedFechamentoEmpresaIdRoute: AuthenticatedFechamentoEmpresaIdRoute,
   AuthenticatedGestaoLogsRoute: AuthenticatedGestaoLogsRoute,
   AuthenticatedGestaoOportunidadesRoute: AuthenticatedGestaoOportunidadesRoute,
   AuthenticatedRevisarDocumentoIdRoute: AuthenticatedRevisarDocumentoIdRoute,
@@ -580,3 +623,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
