@@ -57,6 +57,7 @@ SVC_PWD   = os.getenv("SUPABASE_SVC_PASSWORD") or ""
 
 BUCKET_DOCS = "documentos-clientes"
 BUCKET_CONC = "conciliacoes"
+BUCKET_BAL = "balancetes"
 
 SR_HEADERS = {"apikey": SR, "Authorization": f"Bearer {SR}"}
 
@@ -978,6 +979,101 @@ def processar_via_gestta(empresa_id, competencia, termo_cliente, tarefa_id, banc
     resumo = processar_arquivos(empresa_id, competencia_front, arquivos, banco_cod, jwt)
     resumo.update({"tarefa_id": tarefa_id, "responsavel": responsavel, "competencia_front": competencia_front})
     return resumo
+
+
+def persistir_fechamento(
+    empresa_id: str,
+    gestta_task_id: str,
+    competencia: str,
+    exercicio: int,
+    balancete_path: str | None,
+    conciliacoes_path: str | None = None,
+    gestta_ref: str | None = None,
+    slots_faltando: list | None = None,
+) -> dict:
+    """Sobe PDFs nos buckets e grava balancetes + balancete_linhas (parse local SCI)."""
+    sys.path.insert(0, str(ROOT / "src" / "parsers"))
+    from balancete_sci import parsear_balancete_pdf  # noqa: E402
+
+    prefix = f"{empresa_id}/{competencia}/gestta-{gestta_task_id}"
+    balancete_url = conciliacoes_url = None
+    parse = None
+
+    if balancete_path:
+        p = Path(balancete_path)
+        balancete_url = f"{prefix}/{_safe_storage_name(p.name)}"
+        sb_upload(BUCKET_BAL, balancete_url, p.read_bytes(), mime_de(p))
+        parse = parsear_balancete_pdf(p)
+        log(f"    parse balancete: {len(parse.get('linhas') or [])} linhas, D=C={parse.get('dc_ok')}")
+
+    if conciliacoes_path:
+        p2 = Path(conciliacoes_path)
+        conciliacoes_url = f"{prefix}/{_safe_storage_name(p2.name)}"
+        sb_upload(BUCKET_CONC, conciliacoes_url, p2.read_bytes(), mime_de(p2))
+        log(f"    conciliações arquivadas: {p2.name}")
+
+    if not balancete_path:
+        status = "incompleto"
+    elif conciliacoes_path and parse and parse.get("dc_ok"):
+        status = "ok"
+    elif balancete_path:
+        status = "parcial"
+    else:
+        status = "incompleto"
+
+    divergencias = dict(parse.get("divergencias") or {}) if parse else {}
+    if slots_faltando:
+        divergencias["slots_faltando"] = slots_faltando
+
+    row = {
+        "empresa_id": empresa_id,
+        "exercicio": exercicio,
+        "competencia": competencia,
+        "gestta_task_id": gestta_task_id,
+        "gestta_ref": gestta_ref,
+        "balancete_url": balancete_url,
+        "conciliacoes_url": conciliacoes_url,
+        "storage_path": prefix,
+        "debitos_total": parse.get("debitos_total") if parse else None,
+        "creditos_total": parse.get("creditos_total") if parse else None,
+        "dc_ok": parse.get("dc_ok") if parse else None,
+        "status": status,
+        "divergencias": divergencias,
+    }
+
+    existente = sb_get("balancetes", {
+        "select": "id",
+        "gestta_task_id": f"eq.{gestta_task_id}",
+        "limit": "1",
+    })
+    if existente:
+        balancete_id = existente[0]["id"]
+        sb_update("balancetes", {"id": balancete_id}, row)
+        sb_delete("balancete_linhas", {"balancete_id": balancete_id})
+    else:
+        ins = sb_insert("balancetes", row)
+        balancete_id = ins[0]["id"]
+
+    for ln in (parse or {}).get("linhas") or []:
+        sb_insert("balancete_linhas", {
+            "balancete_id": balancete_id,
+            "ordem": ln["ordem"],
+            "pdc_codigo": ln["pdc_codigo"],
+            "conta_nome": ln["conta_nome"],
+            "saldo_anterior": ln["saldo_anterior"],
+            "debito": ln["debito"],
+            "credito": ln["credito"],
+            "saldo_atual": ln["saldo_atual"],
+        }, retornar=False)
+
+    return {
+        "balancete_id": balancete_id,
+        "status": status,
+        "dc_ok": parse.get("dc_ok") if parse else None,
+        "linhas": len((parse or {}).get("linhas") or []),
+        "debitos_total": parse.get("debitos_total") if parse else None,
+        "creditos_total": parse.get("creditos_total") if parse else None,
+    }
 
 
 def main():
