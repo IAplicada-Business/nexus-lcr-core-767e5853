@@ -1012,7 +1012,17 @@ export const getFechamentoCliente = createServerFn({ method: "GET" })
         .limit(1)
         .maybeSingle();
       if (e2) throw e2;
-      return { empresa, balancete };
+
+      let linhas: unknown[] = [];
+      if (balancete?.id) {
+        const { data: ls, error: e3 } = await context.supabase
+          .from("balancete_linhas")
+          .select("ordem, pdc_codigo, conta_nome, saldo_anterior, debito, credito, saldo_atual")
+          .eq("balancete_id", balancete.id)
+          .order("ordem", { ascending: true });
+        if (!e3) linhas = ls ?? [];
+      }
+      return { empresa, balancete, linhas };
     } catch {
       return { empresa, balancete: null };
     }
