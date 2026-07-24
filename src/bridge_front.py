@@ -42,6 +42,7 @@ load_dotenv(ROOT / ".env")
 # Importa os módulos da automação já existentes (rodando a partir da raiz do repo)
 sys.path.insert(0, str(ROOT / "src" / "parsers"))
 sys.path.insert(0, str(ROOT / "src" / "ai"))
+sys.path.insert(0, str(ROOT / "src" / "sci"))
 sys.path.insert(0, str(ROOT / "src"))
 from arquivos_compactados import expandir_arquivos_compactados  # noqa: E402
 from extrato_bancario import parsear_extrato, extrair_identidade, chave_extrato, detectar_banco  # noqa: E402
@@ -57,6 +58,7 @@ SVC_PWD   = os.getenv("SUPABASE_SVC_PASSWORD") or ""
 
 BUCKET_DOCS = "documentos-clientes"
 BUCKET_CONC = "conciliacoes"
+BUCKET_BAL = "balancetes"
 
 SR_HEADERS = {"apikey": SR, "Authorization": f"Bearer {SR}"}
 
@@ -477,6 +479,33 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
     if not transacoes:
         raise RuntimeError("Nenhuma transação extraída do extrato.")
 
+    # OPT-0004 (Bruno 22/07): a competência do extrato é o PERÍODO REAL do movimento
+    # (mês dominante das datas das transações), não o mês da cobrança. Corrige o +1
+    # que acontece quando o competence_date do Gestta falta e cai no --competencia.
+    # GUARDA ±N meses (env COMP_JANELA_MESES, default 2) vs competencia_front: fora
+    # da janela mantém o carimbo original (protege contra data esquisita/ano trocado).
+    try:
+        _meses: dict[str, int] = {}
+        for _t in transacoes:
+            _iso = _iso_data(_t.get("data"))
+            if _iso and len(_iso) >= 7 and _iso[4] == "-":
+                _ym = _iso[:7]
+                _meses[_ym] = _meses.get(_ym, 0) + 1
+        if _meses and re.match(r"^\d{4}-\d{2}$", competencia or ""):
+            _comp_real = max(_meses, key=lambda k: (_meses[k], k))  # mais frequente; desempata pelo mais recente
+            _idx = lambda ym: int(ym[:4]) * 12 + int(ym[5:7])
+            try:
+                _janela = int(os.getenv("COMP_JANELA_MESES", "2"))
+            except Exception:
+                _janela = 2
+            if _comp_real != competencia and abs(_idx(_comp_real) - _idx(competencia)) <= _janela:
+                log(f"    OPT-0004: competência ajustada {competencia} -> {_comp_real} "
+                    f"(período real do extrato; guarda ±{_janela} meses)")
+                competencia = _comp_real
+                comp_motor = f"{competencia[5:7]}/{competencia[0:4]}"
+    except Exception as _e:
+        log(f"    AVISO: ajuste de competência (OPT-0004) falhou ({_e}); mantendo {competencia}")
+
     log("\n[2] Garantindo competência + registrando documento...")
     competencia_id = ensure_competencia(empresa_id, competencia)
     storage_path = f"{empresa_id}/{competencia}/{_safe_storage_name(extrato_path.name)}"
@@ -494,7 +523,8 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
     # Dedup por IDENTIDADE (banco/agência/conta/mês = mesmo extrato). Se já existe um
     # original com esta chave nesta empresa → marca ESTE como duplicata, NÃO gera razão
     # (regra Rafa+Cleiton). Feito ANTES do motor IA p/ não gastar classificação à toa.
-    identidade = extrair_identidade(str(extrato_path), banco=detectar_banco(extrato_path.name))
+    banco_detectado = detectar_banco(str(extrato_path))
+    identidade = extrair_identidade(str(extrato_path), banco=banco_detectado)
     chave = chave_extrato(identidade, competencia)
     original = _buscar_original_extrato(empresa_id, chave, documento_id) if chave else None
     if original:
@@ -517,8 +547,23 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
         log(f"    AVISO: chave {chave} coincide com '{original.get('arquivo_nome')}' mas sobreposição {ov:.0%} "
             f"(orig {len(orig_lancs)} lanç.) — tratando como extrato próprio, gera razão")
 
-    log(f"\n[3] Classificando com o motor IA (banco {banco_cod}, {comp_motor})...")
-    resultado = classificar_extrato(transacoes, conta_banco=banco_cod, competencia=comp_motor)
+    # OPT-0007 (multi-banco): a contrapartida contábil é o banco DESTE extrato,
+    # não o único banco "padrão" da empresa. Prefere o banco do cabeçalho do PDF
+    # (extrair_identidade), com fallback pra detecção por nome e pro banco_cod.
+    banco_extrato_nome = (identidade.get("banco") if isinstance(identidade, dict) else None) or banco_detectado
+    banco_cod_extrato = banco_cod
+    try:
+        from gerar_planilha_supabase import resolver_codigo_banco_do_extrato  # noqa: E402 (src/sci no path)
+        cod = resolver_codigo_banco_do_extrato(empresa_id, banco_extrato_nome, fallback=banco_cod)
+        if cod is not None:
+            banco_cod_extrato = cod
+    except Exception as e:
+        log(f"    AVISO: resolucao multi-banco falhou ({e}); usando banco padrao {banco_cod}")
+    if banco_cod_extrato != banco_cod:
+        log(f"    multi-banco (OPT-0007): extrato '{banco_extrato_nome}' -> conta contabil {banco_cod_extrato} (padrao empresa era {banco_cod})")
+
+    log(f"\n[3] Classificando com o motor IA (banco {banco_cod_extrato}, {comp_motor})...")
+    resultado = classificar_extrato(transacoes, conta_banco=banco_cod_extrato, competencia=comp_motor)
     aprovadas = resultado["aprovadas"]
     revisao = [r["classificacao_sugerida"] for r in resultado["revisao_manual"]]
     log(f"    aprovadas={len(aprovadas)} revisão={len(revisao)} erros={resultado['resumo']['erros']}")
@@ -978,6 +1023,140 @@ def processar_via_gestta(empresa_id, competencia, termo_cliente, tarefa_id, banc
     resumo = processar_arquivos(empresa_id, competencia_front, arquivos, banco_cod, jwt)
     resumo.update({"tarefa_id": tarefa_id, "responsavel": responsavel, "competencia_front": competencia_front})
     return resumo
+
+
+def persistir_fechamento(
+    empresa_id: str,
+    gestta_task_id: str,
+    competencia: str,
+    exercicio: int,
+    balancete_path: str | None,
+    conciliacoes_path: str | None = None,
+    gestta_ref: str | None = None,
+    slots_faltando: list | None = None,
+) -> dict:
+    """Sobe PDFs nos buckets e grava balancetes + balancete_linhas (parse local SCI)."""
+    sys.path.insert(0, str(ROOT / "src" / "parsers"))
+    from balancete_sci import parsear_balancete_pdf  # noqa: E402
+
+    prefix = f"{empresa_id}/{competencia}/gestta-{gestta_task_id}"
+    balancete_url = conciliacoes_url = None
+    parse = None
+
+    if balancete_path:
+        p = Path(balancete_path)
+        balancete_url = f"{prefix}/{_safe_storage_name(p.name)}"
+        sb_upload(BUCKET_BAL, balancete_url, p.read_bytes(), mime_de(p))
+        parse = parsear_balancete_pdf(p)
+        log(f"    parse balancete: {len(parse.get('linhas') or [])} linhas, D=C={parse.get('dc_ok')}")
+
+    if conciliacoes_path:
+        p2 = Path(conciliacoes_path)
+        conciliacoes_url = f"{prefix}/{_safe_storage_name(p2.name)}"
+        sb_upload(BUCKET_CONC, conciliacoes_url, p2.read_bytes(), mime_de(p2))
+        log(f"    conciliações arquivadas: {p2.name}")
+
+    if not balancete_path:
+        status = "incompleto"
+    elif conciliacoes_path and parse and parse.get("dc_ok"):
+        status = "ok"
+    elif balancete_path:
+        status = "parcial"
+    else:
+        status = "incompleto"
+
+    divergencias = dict(parse.get("divergencias") or {}) if parse else {}
+    if slots_faltando:
+        divergencias["slots_faltando"] = slots_faltando
+
+    row = {
+        "empresa_id": empresa_id,
+        "exercicio": exercicio,
+        "competencia": competencia,
+        "gestta_task_id": gestta_task_id,
+        "gestta_ref": gestta_ref,
+        "balancete_url": balancete_url,
+        "conciliacoes_url": conciliacoes_url,
+        "storage_path": prefix,
+        "debitos_total": parse.get("debitos_total") if parse else None,
+        "creditos_total": parse.get("creditos_total") if parse else None,
+        "dc_ok": parse.get("dc_ok") if parse else None,
+        "status": status,
+        "divergencias": divergencias,
+    }
+
+    existente = sb_get("balancetes", {
+        "select": "id",
+        "gestta_task_id": f"eq.{gestta_task_id}",
+        "limit": "1",
+    })
+    if existente:
+        balancete_id = existente[0]["id"]
+        sb_update("balancetes", {"id": balancete_id}, row)
+        sb_delete("balancete_linhas", {"balancete_id": balancete_id})
+    else:
+        ins = sb_insert("balancetes", row)
+        balancete_id = ins[0]["id"]
+
+    for ln in (parse or {}).get("linhas") or []:
+        sb_insert("balancete_linhas", {
+            "balancete_id": balancete_id,
+            "ordem": ln["ordem"],
+            "pdc_codigo": ln["pdc_codigo"],
+            "conta_nome": ln["conta_nome"],
+            "saldo_anterior": ln["saldo_anterior"],
+            "debito": ln["debito"],
+            "credito": ln["credito"],
+            "saldo_atual": ln["saldo_atual"],
+        }, retornar=False)
+
+    return {
+        "balancete_id": balancete_id,
+        "status": status,
+        "dc_ok": parse.get("dc_ok") if parse else None,
+        "linhas": len((parse or {}).get("linhas") or []),
+        "debitos_total": parse.get("debitos_total") if parse else None,
+        "creditos_total": parse.get("creditos_total") if parse else None,
+    }
+
+
+_STATUS_AVISO_FRONT = {
+    "sem_empresa": "sem_cadastro",
+    "match_ambiguo": "sem_cadastro",
+    "incompleta": "incompleto",
+}
+
+
+def persistir_fechamento_aviso(
+    gestta_task_id: str,
+    codigo_gestta: str | None,
+    nome_gestta: str,
+    status_pipeline: str,
+    motivo: str,
+    exercicio: int = 2025,
+) -> dict:
+    """Grava aviso no Supabase para exibir na aba Fechamento (sem empresa_id)."""
+    status = _STATUS_AVISO_FRONT.get(status_pipeline, "sem_cadastro")
+    row = {
+        "exercicio": exercicio,
+        "gestta_task_id": gestta_task_id,
+        "codigo_gestta": (codigo_gestta or "").strip() or None,
+        "nome_gestta": (nome_gestta or codigo_gestta or "?").strip(),
+        "status": status,
+        "motivo": (motivo or "")[:500],
+    }
+    existente = sb_get("fechamento_avisos", {
+        "select": "id",
+        "gestta_task_id": f"eq.{gestta_task_id}",
+        "limit": "1",
+    })
+    if existente:
+        aviso_id = existente[0]["id"]
+        sb_update("fechamento_avisos", {"id": aviso_id}, row)
+    else:
+        ins = sb_insert("fechamento_avisos", row)
+        aviso_id = ins[0]["id"]
+    return {"aviso_id": aviso_id, "status": status}
 
 
 def main():

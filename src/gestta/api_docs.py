@@ -22,7 +22,9 @@ Contratos (drop-in dos passos browser):
 
 import re
 import time
+import unicodedata
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 
@@ -85,6 +87,23 @@ def _customer_id(detalhe: dict):
 
 def _requested_documents(detalhe: dict) -> list:
     return (detalhe.get("document_request") or {}).get("requested_documents") or []
+
+
+def _norm_slot(nome: str) -> str:
+    return unicodedata.normalize("NFKD", nome or "").encode("ascii", "ignore").decode().upper().strip()
+
+
+FECHAMENTO_SLOTS = frozenset({"BALANCETE", "CONCILIACOES"})
+
+
+def _filename_from_url(url: str, fallback: str) -> str:
+    m = re.search(r"filename%3D%22([^%]+)%22", url or "", re.IGNORECASE)
+    if m:
+        return unquote(m.group(1))
+    m2 = re.search(r'filename="([^"]+)"', url or "", re.IGNORECASE)
+    if m2:
+        return m2.group(1)
+    return fallback
 
 
 def detalhe_tarefa(task_id: str, jwt: str) -> dict:
@@ -232,8 +251,10 @@ def _baixar_arquivo(task_id, doc_id, customer_id, file_id, file_name, jwt, tenta
     return None, "falha", motivo
 
 
-def baixar_documentos(detalhe: dict, destino: str, jwt: str):
+def baixar_documentos(detalhe: dict, destino: str, jwt: str, nomes_permitidos: set | None = None):
     """Baixa via REST todos os arquivos de documentos NÃO desconsiderados.
+    nomes_permitidos: se set, só baixa slots cujo name normalizado está no set
+    (fechamento anual — BALANCETE, CONCILIAÇÕES). COBRANÇA omite o param.
     Cada arquivo: POST (URL S3 assinada) + GET (bytes), com retry em falha de
     download (_baixar_arquivo). Salva os que vieram OK e coleta os que falharam.
     Retorna {"salvos": [caminhos], "vazios": [{arquivo, caminho, motivo}],
@@ -249,6 +270,9 @@ def baixar_documentos(detalhe: dict, destino: str, jwt: str):
 
     for d in _requested_documents(detalhe):
         if d.get("disconsidered"):
+            continue
+        slot = d.get("name") or ""
+        if nomes_permitidos and _norm_slot(slot) not in nomes_permitidos:
             continue
         for f in (d.get("files") or []):
             file_name = f.get("file_name") or f.get("_id") or "arquivo"
@@ -273,3 +297,67 @@ def baixar_documentos(detalhe: dict, destino: str, jwt: str):
                 log(f"    OK baixado: {nome} ({len(conteudo)}b)")
             time.sleep(0.3)  # espalha a carga na API do Gestta
     return {"salvos": salvos, "vazios": vazios, "falhas": falhas}
+
+
+def slots_fechamento(detalhe: dict) -> dict:
+    """Presença dos slots alvo em company_documents (fechamento anual)."""
+    alvo = {"BALANCETE", "CONCILIACOES"}
+    presentes = {}
+    faltando = []
+    for d in detalhe.get("company_documents") or []:
+        if d.get("disconsidered"):
+            continue
+        norm = _norm_slot(d.get("name") or "")
+        if norm not in alvo:
+            continue
+        tem = bool(d.get("file"))
+        presentes[norm] = tem
+    for slot in sorted(alvo):
+        if not presentes.get(slot):
+            faltando.append(slot)
+    return {"presentes": presentes, "faltando": faltando, "completo": len(faltando) == 0}
+
+
+def baixar_company_documents(detalhe: dict, destino: str, jwt: str,
+                             nomes_permitidos: set | None = None):
+    """Baixa anexos de company_documents[].file (URL S3 assinada — fechamento anual)."""
+    Path(destino).mkdir(parents=True, exist_ok=True)
+    alvo = nomes_permitidos or FECHAMENTO_SLOTS
+    alvo_norm = {_norm_slot(x) for x in alvo}
+    salvos, faltando, falhas, usados = [], [], [], set()
+
+    for d in detalhe.get("company_documents") or []:
+        if d.get("disconsidered"):
+            continue
+        slot = d.get("name") or ""
+        norm = _norm_slot(slot)
+        if norm not in alvo_norm:
+            continue
+        url = (d.get("file") or "").strip()
+        if not url:
+            faltando.append(slot)
+            continue
+        fallback = f"{norm}.pdf"
+        file_name = _filename_from_url(url, fallback)
+        try:
+            r = _req("GET", url, jwt=None)
+            cls, motivo = _classificar_download(r, file_name)
+            if cls != "salva":
+                falhas.append({"arquivo": file_name, "slot": slot, "motivo": motivo, "tipo": cls})
+                log(f"    FALHA [{slot}]: {file_name}: {motivo}")
+                continue
+            nome = _nome_unico(file_name, usados)
+            caminho = Path(destino) / nome
+            caminho.write_bytes(r.content)
+            salvos.append({"caminho": str(caminho), "slot": slot, "slot_norm": norm})
+            log(f"    OK [{slot}]: {nome} ({len(r.content)}b)")
+        except Exception as e:
+            falhas.append({"arquivo": file_name, "slot": slot, "motivo": str(e)[:120], "tipo": "download"})
+            log(f"    FALHA [{slot}]: {file_name}: {e}")
+        time.sleep(0.3)
+
+    for slot in sorted(alvo_norm):
+        if slot not in {s["slot_norm"] for s in salvos} and slot not in {_norm_slot(x) for x in faltando}:
+            # slot existe mas sem arquivo na API
+            faltando.append(slot)
+    return {"salvos": salvos, "faltando": faltando, "falhas": falhas}
