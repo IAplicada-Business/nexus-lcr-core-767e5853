@@ -334,6 +334,37 @@ def buscar_conta_banco(empresa_id: str, apelidos: dict[str, int] | None = None) 
     return _resolver_codigo_banco(melhor.get("banco"), apelidos or buscar_apelidos_banco())
 
 
+def resolver_codigo_banco_do_extrato(
+    empresa_id: str,
+    banco_detectado: str | None,
+    apelidos: dict[str, int] | None = None,
+    fallback: int | None = None,
+) -> int | None:
+    """OPT-0007 (Bruno 22/07) — MULTI-BANCO: resolve o código LCR da contrapartida
+    a partir do banco DETECTADO no extrato (detectar_banco), não do único "melhor"
+    banco da empresa. Empresa com Santander + Inter tinha o extrato Santander caindo
+    na conta contábil do Inter (o mais recente cadastrado). Aqui cada extrato usa a
+    conta contábil do seu próprio banco.
+
+    Guarda contra erro de detecção: só usa o código do banco detectado se a empresa
+    TIVER uma conta cadastrada desse banco (senão cai no `fallback` = banco da empresa).
+    """
+    if _eh_banco_placeholder(banco_detectado) or not (banco_detectado or "").strip():
+        return fallback
+    ap = apelidos or buscar_apelidos_banco()
+    cod = _resolver_codigo_banco(banco_detectado, ap)
+    if cod is None:
+        return fallback
+    contas = sb_get("contas_bancarias", {
+        "select": "banco",
+        "empresa_id": f"eq.{empresa_id}",
+    })
+    for c in contas:
+        if not _eh_banco_placeholder(c.get("banco")) and _resolver_codigo_banco(c.get("banco"), ap) == cod:
+            return cod
+    return fallback
+
+
 def buscar_lancamentos(empresa_id: str, competencia: str) -> list:
     return sb_get("lancamentos", {
         "select": (

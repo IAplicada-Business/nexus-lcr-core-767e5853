@@ -22,6 +22,8 @@ export type ClassificacaoParsed = {
   dados_extraidos?: string;
   agencia?: string;
   conta?: string;
+  saldo_inicial?: number;
+  saldo_final?: number;
   conta_corrente?: string;
   observacoes?: string;
   dados_suporte?: {
@@ -42,6 +44,8 @@ export const FORMATO_RESPOSTA_JSON = `FORMATO DE RESPOSTA — responda APENAS co
   "dados_extraidos": "<resumo ou JSON string>",
   "agencia": "<só extrato>",
   "conta": "<só extrato, com DV ex.: 33033-2>",
+  "saldo_inicial": 0,
+  "saldo_final": 0,
   "dados_suporte": { "valor_total": 0, "data_documento": "AAAA-MM-DD", "participante": "", "numero": "" },
   "lancamentos_sugeridos": [
     {
@@ -60,6 +64,7 @@ export const FORMATO_RESPOSTA_JSON = `FORMATO DE RESPOSTA — responda APENAS co
   "observacoes": ""
 }
 Campos obrigatórios: tipo_documento, lancamentos_sugeridos (use [] se documento suporte).
+EXTRATO: preencha saldo_inicial e saldo_final como NÚMERO (ex.: 25.79; use 0 se o saldo for zero). Não os deixe em branco quando o extrato informar saldo.
 COMPACTO: extratos/faturas com muitas linhas — liste TODOS os lançamentos; justificativa máx. 60 caracteres; omita participante se vazio.`;
 
 /** Remove fences markdown e extrai o primeiro objeto/array JSON do texto. */
@@ -104,6 +109,21 @@ function normLancamento(raw: Record<string, unknown>): LancSugerido | null {
   };
 }
 
+/** Coage number | string BR ("1.234,56" / "25,79") → number; undefined se não numérico. */
+function toNumOpt(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v === "string" && v.trim()) {
+    const s = v.trim().replace(/[^\d,.\-]/g, "");
+    if (!s) return undefined;
+    const norm = /\d+\.\d{3}/.test(s) || (s.includes(",") && s.includes("."))
+      ? s.replace(/\./g, "").replace(",", ".")
+      : s.replace(",", ".");
+    const n = Number(norm);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
 /** Normaliza objeto bruto p/ shape esperado pelo pipeline (tolerante a campos faltantes). */
 export function normalizarClassificacao(raw: unknown): ClassificacaoParsed {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -138,6 +158,8 @@ export function normalizarClassificacao(raw: unknown): ClassificacaoParsed {
     agencia: o.agencia != null ? String(o.agencia) : undefined,
     conta: o.conta != null ? String(o.conta) : (o.conta_corrente != null ? String(o.conta_corrente) : undefined),
     conta_corrente: o.conta_corrente != null ? String(o.conta_corrente) : undefined,
+    saldo_inicial: toNumOpt(o.saldo_inicial),
+    saldo_final: toNumOpt(o.saldo_final),
     observacoes: o.observacoes != null ? String(o.observacoes) : undefined,
     dados_suporte,
     lancamentos_sugeridos,

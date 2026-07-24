@@ -12,7 +12,7 @@
 // refletem as pendências v3: saldo não confere (+1) e/ou faltantes (+N).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { detectarFaltantes, sinalPorNatureza, validarSaldo, type LancamentoConc, type LinhaExtrato } from "./saldo.ts";
+import { detectarFaltantes, sinalPorNatureza, validarSaldo, type Dispensa, type LancamentoConc, type LinhaExtrato } from "./saldo.ts";
 import { avaliarTravaAnalisar, avaliarTravaFinalizar, contarRevisaoPendente } from "./travas.ts";
 import { formatoBinarioDetectado, parseCsv, type Linha } from "./parse-csv.ts";
 import { paginarTodas } from "./paginar.ts";
@@ -41,12 +41,18 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await admin.auth.getUser(token);
   if (userErr || !userData.user) return json(401, { error: "Token inválido" });
 
-  let body: { conciliacao_id?: string; empresa_id?: string; competencia?: string; modo?: "analisar" | "finalizar" };
+  let body: {
+    conciliacao_id?: string; empresa_id?: string; competencia?: string;
+    modo?: "analisar" | "finalizar" | "dispensar";
+    dispensa?: { lado?: string; data?: string | null; valor?: number; descricao?: string; lancamento_id?: string | null };
+    remover?: boolean;
+  };
   try { body = await req.json(); } catch { return fail("JSON inválido"); }
+  // "dispensar" (OPT-0008) persiste a dispensa e recalcula como "analisar".
   const modo = body.modo === "finalizar" ? "finalizar" : "analisar";
 
   // localiza a conciliação
-  let q = admin.from("conciliacoes").select("id, empresa_id, competencia, extrato_csv_url, resultado, divergencias_count");
+  let q = admin.from("conciliacoes").select("id, empresa_id, competencia, extrato_csv_url, resultado, divergencias_count, faltantes_dispensados");
   q = body.conciliacao_id
     ? q.eq("id", body.conciliacao_id)
     : q.eq("empresa_id", body.empresa_id ?? "").eq("competencia", body.competencia ?? "");
@@ -54,6 +60,31 @@ Deno.serve(async (req) => {
   if (cErr) return fail(cErr.message);
   if (!conc) return fail("Conciliação não encontrada.");
   if (!conc.extrato_csv_url) return fail("Importe o extrato bancário (CSV) antes de conciliar.");
+
+  // OPT-0008: registra/remove a dispensa de um faltante e segue para recalcular
+  // (modo cai em "analisar" abaixo — detectarFaltantes já filtra os dispensados).
+  if (body.modo === "dispensar") {
+    const d = body.dispensa;
+    if (!d || (d.lado !== "extrato" && d.lado !== "lancamento")) return fail("Dispensa inválida.");
+    const atual: Dispensa[] = Array.isArray(conc.faltantes_dispensados) ? conc.faltantes_dispensados as Dispensa[] : [];
+    const assinatura: Dispensa = {
+      lado: d.lado,
+      data: d.data ?? null,
+      valor_cents: Math.round(Math.abs(Number(d.valor) || 0) * 100),
+      descricao: String(d.descricao ?? "").slice(0, 200),
+      lancamento_id: d.lancamento_id ?? null,
+    };
+    const mesma = (a: Dispensa, b: Dispensa) =>
+      a.lado === b.lado && a.valor_cents === b.valor_cents &&
+      (a.data ?? "") === (b.data ?? "") && (a.descricao ?? "") === (b.descricao ?? "") &&
+      (a.lancamento_id ?? "") === (b.lancamento_id ?? "");
+    const novo = body.remover
+      ? atual.filter((x) => !mesma(x, assinatura))
+      : (atual.some((x) => mesma(x, assinatura)) ? atual : [...atual, assinatura]);
+    const { error: dErr } = await admin.from("conciliacoes").update({ faltantes_dispensados: novo }).eq("id", conc.id);
+    if (dErr) return fail(dErr.message);
+    conc.faltantes_dispensados = novo;
+  }
 
   // Finalização: revisão zerada + faltantes = 0 + análise feita.
   // Saldo NÃO trava (OPT-0005). Espelha podeFinalizar do front via
@@ -213,7 +244,8 @@ Deno.serve(async (req) => {
   // fonte_extrato sem CSV correspondente).
   const extratoLinhas: LinhaExtrato[] = extrato.map((l) => ({ data: l.data, descricao: l.descricao, valor: l.valor }));
   const saldo = validarSaldo({ saldoInicial, saldoFinal, extrato: extratoLinhas });
-  const faltantes = detectarFaltantes({ extrato: extratoLinhas, lancamentos: lancamentosConc });
+  const dispensados = (conc.faltantes_dispensados as Dispensa[] | null) ?? [];
+  const faltantes = detectarFaltantes({ extrato: extratoLinhas, lancamentos: lancamentosConc, dispensados });
 
   const resultado = {
     gerado_em: new Date().toISOString(),

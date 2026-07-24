@@ -122,6 +122,37 @@ export type Faltantes = {
   divergencias_sinal: DivergenciaSinal[];
 };
 
+// OPT-0008: faltante marcado como dispensado pelo usuário (não exige
+// correspondência). Assinatura persistida em conciliacoes.faltantes_dispensados.
+export type Dispensa = {
+  lado: "extrato" | "lancamento";
+  data: string | null;
+  valor_cents: number;
+  descricao: string;
+  lancamento_id?: string | null;
+};
+
+function normDesc(s: string | null | undefined): string {
+  return (s ?? "").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
+}
+
+/** true se a linha/lançamento casa alguma dispensa (por id ou por assinatura). */
+function estaDispensado(
+  lado: "extrato" | "lancamento",
+  item: { id?: string; data: string | null; valor: number; descricao?: string | null },
+  dispensados: Dispensa[],
+): boolean {
+  const vc = cents(item.valor);
+  const nd = normDesc(item.descricao);
+  const dt = item.data ?? "";
+  return dispensados.some((d) =>
+    d.lado === lado && (
+      (lado === "lancamento" && d.lancamento_id != null && item.id != null && d.lancamento_id === item.id) ||
+      (d.valor_cents === vc && (d.data ?? "") === dt && normDesc(d.descricao) === nd)
+    )
+  );
+}
+
 // #fix-sinal-ia (code review 20/07): alerta não-bloqueante — NÃO é uma 3ª
 // trava, não altera faltantes_count nem remove nada das duas listas acima.
 // Cruza as "sobras" das duas travas (que já exigem MESMO sinal pra casar)
@@ -177,8 +208,10 @@ function detectarDivergenciaSinal(
 export function detectarFaltantes(args: {
   extrato: LinhaExtrato[];
   lancamentos: LancamentoConc[];
+  dispensados?: Dispensa[];
 }): Faltantes {
   const { extrato, lancamentos } = args;
+  const dispensados = args.dispensados ?? [];
 
   // Trava 1: extrato → lançamento COM conta.
   const usadoLancComConta = new Array(lancamentos.length).fill(false);
@@ -213,10 +246,19 @@ export function detectarFaltantes(args: {
   }
   const classificado_sem_extrato = lancamentos.filter((l, j) => l.fonteExtrato && !lancComExtrato[j]);
 
+  // OPT-0008: remove das duas listas (e da contagem/alertas) os faltantes que o
+  // usuário dispensou — casos que, por natureza, não têm correspondência.
+  const extratoFinal = dispensados.length
+    ? extrato_sem_classificacao.filter((l) => !estaDispensado("extrato", l, dispensados))
+    : extrato_sem_classificacao;
+  const lancFinal = dispensados.length
+    ? classificado_sem_extrato.filter((l) => !estaDispensado("lancamento", l, dispensados))
+    : classificado_sem_extrato;
+
   return {
-    extrato_sem_classificacao,
-    classificado_sem_extrato,
-    faltantes_count: extrato_sem_classificacao.length + classificado_sem_extrato.length,
-    divergencias_sinal: detectarDivergenciaSinal(extrato_sem_classificacao, classificado_sem_extrato),
+    extrato_sem_classificacao: extratoFinal,
+    classificado_sem_extrato: lancFinal,
+    faltantes_count: extratoFinal.length + lancFinal.length,
+    divergencias_sinal: detectarDivergenciaSinal(extratoFinal, lancFinal),
   };
 }

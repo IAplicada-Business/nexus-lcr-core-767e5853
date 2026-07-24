@@ -42,6 +42,7 @@ load_dotenv(ROOT / ".env")
 # Importa os módulos da automação já existentes (rodando a partir da raiz do repo)
 sys.path.insert(0, str(ROOT / "src" / "parsers"))
 sys.path.insert(0, str(ROOT / "src" / "ai"))
+sys.path.insert(0, str(ROOT / "src" / "sci"))
 sys.path.insert(0, str(ROOT / "src"))
 from arquivos_compactados import expandir_arquivos_compactados  # noqa: E402
 from extrato_bancario import parsear_extrato, extrair_identidade, chave_extrato, detectar_banco  # noqa: E402
@@ -478,6 +479,33 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
     if not transacoes:
         raise RuntimeError("Nenhuma transação extraída do extrato.")
 
+    # OPT-0004 (Bruno 22/07): a competência do extrato é o PERÍODO REAL do movimento
+    # (mês dominante das datas das transações), não o mês da cobrança. Corrige o +1
+    # que acontece quando o competence_date do Gestta falta e cai no --competencia.
+    # GUARDA ±N meses (env COMP_JANELA_MESES, default 2) vs competencia_front: fora
+    # da janela mantém o carimbo original (protege contra data esquisita/ano trocado).
+    try:
+        _meses: dict[str, int] = {}
+        for _t in transacoes:
+            _iso = _iso_data(_t.get("data"))
+            if _iso and len(_iso) >= 7 and _iso[4] == "-":
+                _ym = _iso[:7]
+                _meses[_ym] = _meses.get(_ym, 0) + 1
+        if _meses and re.match(r"^\d{4}-\d{2}$", competencia or ""):
+            _comp_real = max(_meses, key=lambda k: (_meses[k], k))  # mais frequente; desempata pelo mais recente
+            _idx = lambda ym: int(ym[:4]) * 12 + int(ym[5:7])
+            try:
+                _janela = int(os.getenv("COMP_JANELA_MESES", "2"))
+            except Exception:
+                _janela = 2
+            if _comp_real != competencia and abs(_idx(_comp_real) - _idx(competencia)) <= _janela:
+                log(f"    OPT-0004: competência ajustada {competencia} -> {_comp_real} "
+                    f"(período real do extrato; guarda ±{_janela} meses)")
+                competencia = _comp_real
+                comp_motor = f"{competencia[5:7]}/{competencia[0:4]}"
+    except Exception as _e:
+        log(f"    AVISO: ajuste de competência (OPT-0004) falhou ({_e}); mantendo {competencia}")
+
     log("\n[2] Garantindo competência + registrando documento...")
     competencia_id = ensure_competencia(empresa_id, competencia)
     storage_path = f"{empresa_id}/{competencia}/{_safe_storage_name(extrato_path.name)}"
@@ -495,7 +523,11 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
     # Dedup por IDENTIDADE (banco/agência/conta/mês = mesmo extrato). Se já existe um
     # original com esta chave nesta empresa → marca ESTE como duplicata, NÃO gera razão
     # (regra Rafa+Cleiton). Feito ANTES do motor IA p/ não gastar classificação à toa.
-    identidade = extrair_identidade(str(extrato_path), banco=detectar_banco(extrato_path.name))
+    # detectar_banco lê o CONTEÚDO do PDF quando recebe o caminho completo — passar
+    # só .name faz o pdfplumber.open falhar e cair em "desconhecido" (quebrava o
+    # OPT-0007 multi-banco em arquivos sem o banco no nome, ex. "extrato-consolidado").
+    banco_detectado = detectar_banco(str(extrato_path))
+    identidade = extrair_identidade(str(extrato_path), banco=banco_detectado)
     chave = chave_extrato(identidade, competencia)
     original = _buscar_original_extrato(empresa_id, chave, documento_id) if chave else None
     if original:
@@ -518,8 +550,23 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
         log(f"    AVISO: chave {chave} coincide com '{original.get('arquivo_nome')}' mas sobreposição {ov:.0%} "
             f"(orig {len(orig_lancs)} lanç.) — tratando como extrato próprio, gera razão")
 
-    log(f"\n[3] Classificando com o motor IA (banco {banco_cod}, {comp_motor})...")
-    resultado = classificar_extrato(transacoes, conta_banco=banco_cod, competencia=comp_motor)
+    # OPT-0007 (multi-banco): a contrapartida contábil é o banco DESTE extrato,
+    # não o único banco "padrão" da empresa. Prefere o banco do cabeçalho do PDF
+    # (extrair_identidade), com fallback pra detecção por nome e pro banco_cod.
+    banco_extrato_nome = (identidade.get("banco") if isinstance(identidade, dict) else None) or banco_detectado
+    banco_cod_extrato = banco_cod
+    try:
+        from gerar_planilha_supabase import resolver_codigo_banco_do_extrato  # noqa: E402 (src/sci no path)
+        cod = resolver_codigo_banco_do_extrato(empresa_id, banco_extrato_nome, fallback=banco_cod)
+        if cod is not None:
+            banco_cod_extrato = cod
+    except Exception as e:
+        log(f"    AVISO: resolucao multi-banco falhou ({e}); usando banco padrao {banco_cod}")
+    if banco_cod_extrato != banco_cod:
+        log(f"    multi-banco (OPT-0007): extrato '{banco_extrato_nome}' -> conta contabil {banco_cod_extrato} (padrao empresa era {banco_cod})")
+
+    log(f"\n[3] Classificando com o motor IA (banco {banco_cod_extrato}, {comp_motor})...")
+    resultado = classificar_extrato(transacoes, conta_banco=banco_cod_extrato, competencia=comp_motor)
     aprovadas = resultado["aprovadas"]
     revisao = [r["classificacao_sugerida"] for r in resultado["revisao_manual"]]
     log(f"    aprovadas={len(aprovadas)} revisão={len(revisao)} erros={resultado['resumo']['erros']}")

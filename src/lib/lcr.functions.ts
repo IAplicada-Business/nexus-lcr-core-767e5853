@@ -1239,6 +1239,31 @@ export const limparConciliacao = createServerFn({ method: "POST" })
 // descrição. Usado na revisão humana (aba Conciliação bancária) e para acertar
 // uma divergência antes de reconciliar. Ao definir a conta, marca confiança alta
 // (1.0) para o lançamento sair do estado "a revisar".
+// OPT-0007: cadastro 1-clique de conta bancária a partir do que a IA detectou no
+// extrato (usado quando o banco do extrato não casa nenhuma conta cadastrada).
+// Espelha o dedup do auto-sync em processar-documento (empresa+banco+agência+conta).
+export const adicionarContaBancaria = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({
+    empresa_id: z.string().uuid(),
+    banco: z.string().trim().min(1).max(120),
+    agencia: z.string().trim().max(40).optional().default(""),
+    conta: z.string().trim().max(60).optional().default(""),
+  }).parse(d))
+  .handler(async ({ context, data }) => {
+    const { data: existente } = await context.supabase
+      .from("contas_bancarias").select("id")
+      .eq("empresa_id", data.empresa_id).eq("banco", data.banco)
+      .eq("agencia", data.agencia).eq("conta", data.conta).maybeSingle();
+    if (existente) return { ok: true, criado: false, id: (existente as { id: string }).id };
+    const { data: criado, error } = await context.supabase
+      .from("contas_bancarias")
+      .insert({ empresa_id: data.empresa_id, banco: data.banco, agencia: data.agencia, conta: data.conta, tipo: "corrente" } as never)
+      .select("id").single();
+    if (error) throw new Error(error.message);
+    return { ok: true, criado: true, id: (criado as { id: string }).id };
+  });
+
 export const editarLancamento = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({
@@ -1251,6 +1276,9 @@ export const editarLancamento = createServerFn({ method: "POST" })
     documento_numero: z.string().max(80).nullable().optional(),
     part_deb: z.string().max(120).nullable().optional(),
     part_cred: z.string().max(120).nullable().optional(),
+    // OPT-0003: correção manual de entrada/saída. valor é sempre gravado em módulo;
+    // o sinal mora só em natureza_movimento ("debito"=saída, "credito"=entrada).
+    natureza_movimento: z.enum(["debito", "credito"]).optional(),
   }).parse(d))
   .handler(async ({ context, data }) => {
     const patch: Record<string, unknown> = {};
@@ -1260,6 +1288,7 @@ export const editarLancamento = createServerFn({ method: "POST" })
     if (data.part_deb !== undefined) patch.part_deb = data.part_deb;
     if (data.part_cred !== undefined) patch.part_cred = data.part_cred;
     if (data.documento_numero !== undefined) patch.documento_numero = data.documento_numero;
+    if (data.natureza_movimento) patch.natureza_movimento = data.natureza_movimento;
 
     // empresa_id do lançamento — precisamos tanto pra resolver a conta (#131) quanto
     // pro histórico (#140), então busca uma vez só se qualquer um dos dois vier.
@@ -1674,6 +1703,21 @@ export const getConciliacaoDetalhe = createServerFn({ method: "GET" })
       saldoFinal = saldos.final;
     }
 
+    // OPT-0007: banco/agência/conta que a IA detectou no extrato (mesma extração
+    // do auto-sync em processar-documento). O front compara com contas_bancarias
+    // e, se não bater, avisa "banco não cadastrado" + oferece cadastro 1-clique.
+    let bancoDetectado = "", agenciaDetectada = "", contaDetectada = "";
+    if (extratoDoc) {
+      const ci = (extratoDoc.classificacao_ia ?? {}) as Record<string, unknown>;
+      const dstr = (ci.dados_extraidos ?? extratoDoc.dados_extraidos) as unknown;
+      const dobj: Record<string, unknown> = typeof dstr === "string"
+        ? (() => { try { return JSON.parse(dstr) as Record<string, unknown>; } catch { return {}; } })()
+        : ((dstr as Record<string, unknown>) ?? {});
+      bancoDetectado = String(dobj.banco ?? ci.banco ?? "").trim();
+      agenciaDetectada = String(ci.agencia ?? dobj.agencia ?? "").trim();
+      contaDetectada = String(ci.conta ?? ci.conta_corrente ?? dobj.conta ?? dobj.conta_corrente ?? "").trim();
+    }
+
     // Lançamentos por origem + soma considerando débito/crédito (não soma cega).
     const rows = (lancsRes.data ?? []) as { id: string; documento_id: string | null; valor: number | string | null; natureza_movimento: string | null }[];
     const totalLancs = rows.length;
@@ -1707,6 +1751,9 @@ export const getConciliacaoDetalhe = createServerFn({ method: "GET" })
         movimentacao_debito: extratoSums.debito,
         movimentacao_credito: extratoSums.credito,
         movimentacao_liquida: extratoSums.liquido,
+        banco_detectado: bancoDetectado || null,
+        agencia_detectada: agenciaDetectada || null,
+        conta_detectada: contaDetectada || null,
       } : null,
       outros_lancamentos: outrosLancsRows.length,
       outros_valor_debito: outrosSums.debito,

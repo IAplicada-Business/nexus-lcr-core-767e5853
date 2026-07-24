@@ -50,6 +50,23 @@ export function extrairSaldosDeTexto(texto: string): { inicial: number | null; f
     final = mf[1] != null ? parseValorBr(mf[1]) : null;
     if (final == null && /\bzero\b/i.test(mf[0])) final = 0;
   }
+  // Forma composta "saldo(s) inicial e final ... (ambos) R$ X": um único valor
+  // descreve os dois lados (extrato sem movimento).
+  if (inicial == null || final == null) {
+    const reAmbos = new RegExp(
+      String.raw`saldos?\s+inicial\s+e\s+final[^\d]*?(?:${RE_VALOR_NUM}|zero)\b`,
+      "i",
+    );
+    const ma = texto.match(reAmbos);
+    if (ma) {
+      let v: number | null = ma[1] != null ? parseValorBr(ma[1]) : null;
+      if (v == null && /\bzero\b/i.test(ma[0])) v = 0;
+      if (v != null) {
+        if (inicial == null) inicial = v;
+        if (final == null) final = v;
+      }
+    }
+  }
   if (inicial != null && final != null) return { inicial, final };
   const reDated = new RegExp(
     String.raw`saldo\s+(?:em\s+)?(${RE_DATA})(?:\s*\([^)]*\))?\s*[:\-=]?\s*${RE_VALOR_NUM}`,
