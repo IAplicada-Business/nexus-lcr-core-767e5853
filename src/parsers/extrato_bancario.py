@@ -34,7 +34,20 @@ def _parse_valor(v):
     s = str(v).strip()
     if not s:
         return None
-    return float(s.replace('.', '').replace(',', '.'))
+    # Sinal: além do "-" à esquerda, bancos BR (Santander/Bradesco/consolidado)
+    # marcam débito com "-" À DIREITA ("6.000,00-") e alguns usam parênteses
+    # "(6.000,00)". Sem tratar isso, float() estourava ValueError e a linha era
+    # DESCARTADA no loop do parser (débitos sumiam) — e o sinal ficava a cargo da
+    # IA/descrição, que invertia casos como "PAGAMENTO A FORNECEDORES" (crédito).
+    neg = s.startswith('-') or s.endswith('-') or (s.startswith('(') and s.endswith(')'))
+    s2 = re.sub(r'[^\d,.]', '', s)  # remove R$, espaços, sinais, parênteses
+    if not s2:
+        return None
+    try:
+        val = float(s2.replace('.', '').replace(',', '.'))
+    except ValueError:
+        return None
+    return -val if neg else val
 
 
 

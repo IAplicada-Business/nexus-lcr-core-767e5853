@@ -147,9 +147,13 @@ Regras:
   enviadas, tarifas, taxas, IOF) ou 'credito' (banco creditou = ENTRADA de
   dinheiro: recebimentos, depósitos, rendimentos, estorno). Esse campo
   determina a inversão D/C contábil — é crítico que esteja sempre preenchido.
-  Regra prática: se o valor no extrato aparece com sinal negativo ou na coluna
-  "Débito", tipo_movimento = 'debito'. Se aparece positivo ou na coluna
-  "Crédito", tipo_movimento = 'credito'.
+  DECIDA PELO SINAL DA LINHA NO EXTRATO, NÃO PELA DESCRIÇÃO: uma linha rotulada
+  "PAGAMENTO A FORNECEDORES" pode ser um CRÉDITO (estorno/recebimento) — o texto
+  NÃO define a direção; o sinal define. Convenções de sinal (bancos BR):
+  valor negativo, "-" AO FINAL ("6.000,00-"), entre parênteses "(6.000,00)", ou
+  coluna "Débito" = 'debito'. Valor sem sinal, com "+", ou na coluna "Crédito"
+  = 'credito'. Em extrato consolidado, confirme pela coluna/seção de saldo
+  (entrada aumenta o saldo; saída reduz).
 
 MAPA DE TRANSAÇÕES TÍPICAS (referência primária — use o ID no campo regra_id):
 - Para cada movimentação, identifique a regra correspondente no Mapa enviado no contexto.
