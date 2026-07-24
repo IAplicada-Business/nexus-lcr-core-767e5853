@@ -492,6 +492,8 @@ Deno.serve(async (req) => {
   // ex.: extrato de abril enviado na cobrança de maio fecha em MAIO; não dá pra
   // fechar abril em abril, o mês não fechou). NÃO usar o mês extraído do conteúdo
   // pela IA (classificacao.competencia). Só cai no fallback se o doc não tiver.
+  // NOTA (OPT-0004): o fix forward de competência vive no caminho PYTHON
+  // (processar_extrato), que é quem carimba os extratos do Gestta. Ver plano.
   const competencia = doc.competencia
     ?? (classificacao.competencia && /^\d{4}-\d{2}$/.test(classificacao.competencia)
         ? classificacao.competencia

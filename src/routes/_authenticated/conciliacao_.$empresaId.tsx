@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { StatusPill } from "@/components/status-pill";
-import { getConciliacaoDetalhe, getEmpresa, listLancamentosConciliacao, editarLancamento, createLancamento, deleteLancamento, limparConciliacao, listPlanoContas, listHistoricosSci, listDocumentos, enriquecerExtrato, listDocsSuporte } from "@/lib/lcr.functions";
+import { getConciliacaoDetalhe, getEmpresa, listLancamentosConciliacao, editarLancamento, createLancamento, deleteLancamento, limparConciliacao, listPlanoContas, listHistoricosSci, listDocumentos, enriquecerExtrato, listDocsSuporte, adicionarContaBancaria } from "@/lib/lcr.functions";
 import { DOC_TIPO_LABEL } from "@/lib/format";
 import { formatCompetencia } from "@/lib/format";
 import { DocumentoErroHint } from "@/components/documento-erro-hint";
@@ -254,6 +254,21 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
   const { data } = useQuery({ queryKey: key, queryFn: () => getConciliacaoDetalhe({ data: { empresa_id: empresaId, competencia } }) });
   const { data: empresaData } = useQuery({ queryKey: ["empresa", empresaId], queryFn: () => getEmpresa({ data: { id: empresaId } }), staleTime: 60_000 });
   const contaBancariaLabel = formatContaBancaria((empresaData?.contas_bancarias ?? []) as { id?: string; banco: string | null; agencia: string | null; conta: string | null; created_at?: string | null }[]);
+
+  // OPT-0007: o banco detectado no extrato casa alguma conta cadastrada da empresa?
+  // normBanco colapsa grafias ("Banco Itaú"/"Itaú Empresas" → "itau"), mesmo critério
+  // do fix multi-banco. Se não casar, avisa + oferece cadastro 1-clique (abaixo).
+  const [cadastrandoBanco, setCadastrandoBanco] = useState(false);
+  const normBanco = (s?: string | null) =>
+    (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/banco|s\/?a\.?|empresas|ltda|\.|\s/g, "");
+  const contasReg = (empresaData?.contas_bancarias ?? []) as { banco: string | null; conta: string | null }[];
+  const bancoDetectado = data?.extrato?.banco_detectado ?? "";
+  const bancoNaoCadastrado = !!bancoDetectado && !contasReg.some((c) => {
+    const mesmoBanco = !!c.banco && normBanco(c.banco) === normBanco(bancoDetectado);
+    const numDet = String(data?.extrato?.conta_detectada ?? "").replace(/\D/g, "");
+    const mesmaConta = !!numDet && !!c.conta && c.conta.replace(/\D/g, "") === numDet;
+    return mesmoBanco || mesmaConta;
+  });
   const [busy, setBusy] = useState<"analisar" | "finalizar" | null>(null);
 
   // #137 — evento de abertura da tela de conciliação (base do "tempo revisão → SCI").
@@ -393,6 +408,57 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
     }
   }
 
+  // OPT-0008: dispensa/reinclui um faltante por linha e re-analisa (o edge
+  // persiste em conciliacoes.faltantes_dispensados e recalcula o resultado).
+  async function dispensarFaltante(
+    lado: "extrato" | "lancamento",
+    item: { id?: string; data: string | null; valor: number; descricao?: string | null },
+    remover = false,
+  ): Promise<void> {
+    if (!conc) return;
+    setBusy("analisar");
+    try {
+      const { data: res, error } = await supabase.functions.invoke("conciliar", { body: {
+        conciliacao_id: conc.id, modo: "dispensar", remover,
+        dispensa: {
+          lado, data: item.data, valor: item.valor, descricao: item.descricao ?? "",
+          lancamento_id: lado === "lancamento" ? item.id ?? null : null,
+        },
+      } });
+      if (error) throw new Error(error.message);
+      if (res && res.ok === false) throw new Error(res.error ?? "Falha ao dispensar faltante.");
+      await qc.invalidateQueries({ queryKey: key });
+      await qc.invalidateQueries({ queryKey: ["conciliacoes"] });
+      toast.success(remover ? "Dispensa removida — faltante recontado." : "Faltante dispensado.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // OPT-0007: cadastra 1-clique a conta do banco detectado no extrato (pré-preenchida).
+  async function cadastrarBancoDetectado(): Promise<void> {
+    const ext = data?.extrato;
+    if (!ext?.banco_detectado) return;
+    setCadastrandoBanco(true);
+    try {
+      await adicionarContaBancaria({ data: {
+        empresa_id: empresaId,
+        banco: ext.banco_detectado,
+        agencia: ext.agencia_detectada ?? "",
+        conta: ext.conta_detectada ?? "",
+      } });
+      await qc.invalidateQueries({ queryKey: ["empresa", empresaId] });
+      await qc.invalidateQueries({ queryKey: key });
+      toast.success(`Banco "${ext.banco_detectado}" cadastrado. Reprocesse o extrato para migrar a conta contábil dos lançamentos.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro");
+    } finally {
+      setCadastrandoBanco(false);
+    }
+  }
+
   async function finalizarConciliacao(): Promise<boolean> {
     if (!conc) return false;
     const fresh = qc.getQueryData<{ lancamentos: LancConc[] }>(lancKey);
@@ -437,7 +503,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 
   // edição/inclusão de lançamento (o pareamento manual razão×extrato foi
   // substituído pelo motor de saldo + faltantes — #131/#132)
-  const [edit, setEdit] = useState<{ id: string; data: string; valor: string; descricao: string; conta_codigo: string; historico_codigo: string; part_deb: string; part_cred: string } | null>(null);
+  const [edit, setEdit] = useState<{ id: string; data: string; valor: string; descricao: string; conta_codigo: string; historico_codigo: string; part_deb: string; part_cred: string; natureza_movimento: "debito" | "credito" | "" } | null>(null);
   const [novo, setNovo] = useState<{ data: string; valor: string; descricao: string; conta_codigo: string } | null>(null);
   const [acting, setActing] = useState(false);
 
@@ -451,6 +517,10 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
       historico_codigo: l.historico?.codigo ?? "",
       part_deb: l.part_deb ?? "",
       part_cred: l.part_cred ?? "",
+      natureza_movimento: (() => {
+        const n = (l.natureza_movimento ?? "").toLowerCase();
+        return n.startsWith("c") ? "credito" : n.startsWith("d") ? "debito" : "";
+      })(),
     });
   }
 
@@ -511,6 +581,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
         historico_codigo: edit.historico_codigo || undefined,
         part_deb: edit.part_deb.trim() || null,
         part_cred: edit.part_cred.trim() || null,
+        natureza_movimento: edit.natureza_movimento || undefined,
       } });
       setEdit(null);
       await qc.invalidateQueries({ queryKey: ["lanc-conc"] });
@@ -880,6 +951,24 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
           lançamento" no cabeçalho dela. */}
       <div ref={divergenciasRef} className="mb-6">
         {temExtrato && <h3 className="mb-3 font-display text-lg">Resultado da análise: saldo e transações faltantes</h3>}
+        {temExtrato && bancoNaoCadastrado && (
+          <div className="mb-4 flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">Banco do extrato ainda não cadastrado</p>
+              <p className="mt-0.5 text-amber-900/80">
+                A IA detectou <strong>{bancoDetectado}</strong>
+                {data?.extrato?.agencia_detectada ? ` · ag ${data.extrato.agencia_detectada}` : ""}
+                {data?.extrato?.conta_detectada ? ` · conta ${data.extrato.conta_detectada}` : ""}, que não casa nenhuma
+                conta cadastrada desta empresa — os lançamentos podem ter usado a conta contábil do banco padrão (OPT-0007).
+                Cadastre para corrigir os próximos processamentos.
+              </p>
+            </div>
+            <Button size="sm" className="shrink-0" disabled={cadastrandoBanco} onClick={cadastrarBancoDetectado}>
+              {cadastrandoBanco ? "Cadastrando…" : "Cadastrar banco"}
+            </Button>
+          </div>
+        )}
         {resultado?.saldo?.confere && (resultado?.faltantes?.faltantes_count ?? 0) === 0 && conc?.status !== "concluida" && (
           <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3">
             <div className="flex items-center gap-2 text-sm text-emerald-800">
@@ -894,6 +983,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
             faltantes={resultado?.faltantes}
             analisado={!!resultado}
             extratoFonte={resultado?.extrato_fonte}
+            onDispensar={dispensarFaltante}
           />
         )}
         {resultado && conc?.status === "concluida" && (
@@ -1075,6 +1165,16 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
                 <div className="space-y-1.5"><Label>Data (AAAA-MM-DD)</Label><Input value={edit.data} onChange={(e) => setEdit({ ...edit, data: e.target.value })} placeholder="2026-06-30" /></div>
                 <div className="space-y-1.5"><Label>Valor</Label><Input value={edit.valor} onChange={(e) => setEdit({ ...edit, valor: e.target.value })} placeholder="1234.56" /></div>
               </div>
+              <div className="space-y-1.5">
+                <Label>Tipo de movimento</Label>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant={edit.natureza_movimento === "credito" ? "default" : "outline"}
+                    onClick={() => setEdit({ ...edit, natureza_movimento: "credito" })}>Entrada (crédito)</Button>
+                  <Button type="button" size="sm" variant={edit.natureza_movimento === "debito" ? "default" : "outline"}
+                    onClick={() => setEdit({ ...edit, natureza_movimento: "debito" })}>Saída (débito)</Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">Corrija aqui quando um recebimento estiver como pagamento (ou vice-versa) — OPT-0003.</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5"><Label>Participante (débito)</Label><Input value={edit.part_deb} onChange={(e) => setEdit({ ...edit, part_deb: e.target.value })} placeholder="Ex: Andressa Silva" /></div>
                 <div className="space-y-1.5"><Label>Participante (crédito)</Label><Input value={edit.part_cred} onChange={(e) => setEdit({ ...edit, part_cred: e.target.value })} placeholder="Ex: Andressa Silva" /></div>
@@ -1098,11 +1198,12 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 // Painel v3 (motor de saldo + faltantes) — substitui o pareamento manual D/C.
 // KPIs de saldo inicial/final/movimentação/delta com badge confere/não confere,
 // e as duas listas de faltantes: extrato sem classificação, classificado sem extrato.
-function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte }: {
+function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte, onDispensar }: {
   saldo?: ResultadoSaldo;
   faltantes?: Faltantes;
   analisado: boolean;
   extratoFonte?: "csv" | "lancamentos_ia";
+  onDispensar?: (lado: "extrato" | "lancamento", item: { id?: string; data: string | null; valor: number; descricao?: string | null }, remover?: boolean) => void;
 }) {
   // #fix-sinal-ia: alerta não-bloqueante — só exibe, não trava nem soma na
   // contagem de faltantes acima (motivo no comentário do tipo Faltantes).
@@ -1151,6 +1252,42 @@ function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte }: {
               <p className="mt-1 text-xs text-orange-900/70">+ {divergenciasSinal.length - 5} outra(s)</p>
             )}
           </div>
+        </div>
+      )}
+
+      {analisado && faltantes && (faltantes.extrato_sem_classificacao.length > 0 || faltantes.classificado_sem_extrato.length > 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm">
+          <p className="font-medium text-amber-900">
+            Transações faltantes ({faltantes.extrato_sem_classificacao.length + faltantes.classificado_sem_extrato.length})
+          </p>
+          <p className="mt-0.5 text-xs text-amber-900/80">
+            Sem correspondência entre extrato e razão. Se por natureza o lançamento não exige correspondência,
+            clique em <strong>Dispensar</strong> para liberar a conciliação (OPT-0008).
+          </p>
+          <ul className="mt-2 space-y-1">
+            {faltantes.extrato_sem_classificacao.map((l, i) => (
+              <li key={`e-${i}`} className="flex items-center justify-between gap-2 text-xs text-amber-900/90">
+                <span className="truncate">Extrato · {formatDataBR(l.data)} · {brl(l.valor)} — {l.descricao || "—"}</span>
+                {onDispensar && (
+                  <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[11px]"
+                    onClick={() => onDispensar("extrato", { data: l.data, valor: l.valor, descricao: l.descricao })}>
+                    Dispensar
+                  </Button>
+                )}
+              </li>
+            ))}
+            {faltantes.classificado_sem_extrato.map((l) => (
+              <li key={l.id} className="flex items-center justify-between gap-2 text-xs text-amber-900/90">
+                <span className="truncate">Lançamento · {formatDataBR(l.data)} · {brl(l.valor)} — {l.descricao || "—"}</span>
+                {onDispensar && (
+                  <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[11px]"
+                    onClick={() => onDispensar("lancamento", { id: l.id, data: l.data, valor: l.valor, descricao: l.descricao })}>
+                    Dispensar
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

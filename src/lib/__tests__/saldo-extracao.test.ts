@@ -35,6 +35,22 @@ describe("saldo-extracao", () => {
     expect(r.final).toBe(22.15);
   });
 
+  it("vídeo 2: 'saldo anterior zero e saldo final 25,79' (sem R$)", () => {
+    const r = extrairSaldosDeTexto(
+      "extrato bancário Santander Empresas completo (fevereiro/2026), saldo anterior zero e saldo final 25,79, além de tabela.",
+    );
+    expect(r.inicial).toBe(0);
+    expect(r.final).toBe(25.79);
+  });
+
+  it("vídeo 1: forma composta 'saldo inicial e final (ambos R$ 140,30)'", () => {
+    const r = extrairSaldosDeTexto(
+      "Extrato do Banco Inter (01/12/2025 a 31/12/2025). Apresenta saldo inicial e final (ambos R$ 140,30), e o período completo.",
+    );
+    expect(r.inicial).toBe(140.3);
+    expect(r.final).toBe(140.3);
+  });
+
   it("JSON stringificado com chaves saldo_inicial/saldo_final", () => {
     const r = extrairSaldosDocumento(
       JSON.stringify({ saldo_inicial: "1.234,56", saldo_final: 900 }),

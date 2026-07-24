@@ -392,6 +392,27 @@ export function PlanilhaSciTab({ empresaId, empresaNome, competencia }: { empres
 
   const previewRows = linhasSciPreview(lancsComPula, bancoCodigo, bancoNome, pdcTC);
 
+  // OPT-0006 (Bruno 22/07): totais por conta derivados da MESMA fonte da prévia
+  // (previewRows = ladoEfetivo + conta analítica resolvida), pra bater com o
+  // detalhe e com o .xls exportado. A RPC sci_planilha somava `valor` cru (sem
+  // lado D/C nem resolução T/C→analítica) e por isso divergia (ex.: conta com
+  // débito e crédito virava um total único somado errado).
+  const totaisPorConta = (() => {
+    const m = new Map<string, { codigo: string; nome: string; debito: number; credito: number }>();
+    const acc = (cel: { codigo: number | string; nome: string }, lado: "debito" | "credito", v: number) => {
+      const codigo = String(cel.codigo ?? "").trim();
+      if (!codigo) return;
+      const e = m.get(codigo) ?? { codigo, nome: cel.nome ?? "", debito: 0, credito: 0 };
+      e[lado] += v;
+      if (!e.nome && cel.nome) e.nome = cel.nome;
+      m.set(codigo, e);
+    };
+    for (const r of previewRows) { acc(r.debito, "debito", r.valor); acc(r.credito, "credito", r.valor); }
+    return [...m.values()].sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+  })();
+  const totalDeb = totaisPorConta.reduce((s, c) => s + c.debito, 0);
+  const totalCred = totaisPorConta.reduce((s, c) => s + c.credito, 0);
+
   // #135: Baixar SCI só libera depois da conciliação bancária concluída
   // (docs/conciliacao-v3-spec.md — "Conciliar desbloqueia Baixar SCI").
   const { data: concStatus } = useQuery({
@@ -539,6 +560,49 @@ export function PlanilhaSciTab({ empresaId, empresaNome, competencia }: { empres
                 ))}
                 {previewRows.length === 0 && <TableRow><TableCell colSpan={11} className="py-6 text-center text-muted-foreground">Nenhum lançamento com conta nesta competência.</TableCell></TableRow>}
               </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Totais por conta (D/C) — OPT-0006: mesma fonte da prévia/export (bate com o detalhe) */}
+      <Card>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-6 py-3">
+          <ClipboardCheck className="h-4 w-4 text-primary" />
+          <h4 className="font-display text-lg">Totais por conta (débito/crédito)</h4>
+          <span className="text-xs text-muted-foreground">· {totaisPorConta.length} conta(s) · mesma base da prévia e do SCI</span>
+        </div>
+        <CardContent className="p-0">
+          <div className="max-h-[28rem] overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-28">Código</TableHead>
+                  <TableHead>Conta</TableHead>
+                  <TableHead className="text-right">Débito</TableHead>
+                  <TableHead className="text-right">Crédito</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {totaisPorConta.map((c) => (
+                  <TableRow key={c.codigo}>
+                    <TableCell className="font-mono text-xs">{c.codigo}</TableCell>
+                    <TableCell className="text-sm">{c.nome || "—"}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{c.debito ? brl(c.debito) : "—"}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{c.credito ? brl(c.credito) : "—"}</TableCell>
+                  </TableRow>
+                ))}
+                {totaisPorConta.length === 0 && <TableRow><TableCell colSpan={4} className="py-6 text-center text-muted-foreground">Nenhum lançamento com conta nesta competência.</TableCell></TableRow>}
+              </TableBody>
+              {totaisPorConta.length > 0 && (
+                <tfoot>
+                  <TableRow className="border-t-2 font-medium">
+                    <TableCell colSpan={2} className="text-sm">Total (débito deve igualar crédito)</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{brl(totalDeb)}</TableCell>
+                    <TableCell className={cn("text-right font-mono text-sm", Math.abs(totalDeb - totalCred) > 0.01 && "text-rose-600")}>{brl(totalCred)}</TableCell>
+                  </TableRow>
+                </tfoot>
+              )}
             </Table>
           </div>
         </CardContent>
