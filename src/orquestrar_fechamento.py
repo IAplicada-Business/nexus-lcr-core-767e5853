@@ -157,7 +157,7 @@ def marcar_processada_fechamento(gestta_task_id: str, meta: dict):
 
 
 def registrar_aviso_fechamento(tarefa_id: str, codigo: str, nome: str, status: str, motivo: str):
-    """Registra aviso persistente para empresas não cadastradas / match ambíguo."""
+    """Registra aviso persistente para empresas não cadastradas / match ambíguo / incompleta."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     linha = {
         "taskId": tarefa_id,
@@ -169,6 +169,18 @@ def registrar_aviso_fechamento(tarefa_id: str, codigo: str, nome: str, status: s
     }
     with AVISOS.open("a", encoding="utf-8") as f:
         f.write(json.dumps(linha, ensure_ascii=False) + "\n")
+    try:
+        bf.obter_jwt()
+        bf.persistir_fechamento_aviso(
+            gestta_task_id=tarefa_id,
+            codigo_gestta=codigo,
+            nome_gestta=nome,
+            status_pipeline=status,
+            motivo=motivo,
+            exercicio=EXERCICIO,
+        )
+    except Exception as e:
+        log(f"    ⚠️ aviso Supabase não gravado: {str(e)[:160]}")
 
 
 def resolver_empresa_fechamento(codigo: str, nome: str):
@@ -282,9 +294,19 @@ def processar_tarefa_fechamento(t: dict, jwt_gestta: str) -> dict:
             conc_path = item["caminho"]
 
     if not balancete_path:
-        return {**base, "status": "incompleta",
-                "motivo": "slot BALANCETE ausente ou download falhou",
-                "slots": slots, "faltando": dl.get("faltando"), "falhas": dl.get("falhas")}
+        faltando = dl.get("faltando") or slots.get("faltando") or ["BALANCETE"]
+        faltando_txt = ", ".join(faltando)
+        motivo = f"documentos incompletos no Gestta (faltando: {faltando_txt})"
+        marcar_processada_fechamento(tarefa_id, {
+            "status": "incompleta",
+            "empresa_id": empresa_id,
+            "cliente": codigo or nome,
+            "motivo": motivo,
+            "faltando": faltando,
+        })
+        registrar_aviso_fechamento(tarefa_id, codigo, nome, "incompleta", motivo)
+        return {**base, "status": "incompleta", "motivo": motivo, "aviso": True,
+                "slots": slots, "faltando": faltando, "falhas": dl.get("falhas")}
 
     try:
         res = bf.persistir_fechamento(

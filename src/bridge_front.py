@@ -1076,6 +1076,45 @@ def persistir_fechamento(
     }
 
 
+_STATUS_AVISO_FRONT = {
+    "sem_empresa": "sem_cadastro",
+    "match_ambiguo": "sem_cadastro",
+    "incompleta": "incompleto",
+}
+
+
+def persistir_fechamento_aviso(
+    gestta_task_id: str,
+    codigo_gestta: str | None,
+    nome_gestta: str,
+    status_pipeline: str,
+    motivo: str,
+    exercicio: int = 2025,
+) -> dict:
+    """Grava aviso no Supabase para exibir na aba Fechamento (sem empresa_id)."""
+    status = _STATUS_AVISO_FRONT.get(status_pipeline, "sem_cadastro")
+    row = {
+        "exercicio": exercicio,
+        "gestta_task_id": gestta_task_id,
+        "codigo_gestta": (codigo_gestta or "").strip() or None,
+        "nome_gestta": (nome_gestta or codigo_gestta or "?").strip(),
+        "status": status,
+        "motivo": (motivo or "")[:500],
+    }
+    existente = sb_get("fechamento_avisos", {
+        "select": "id",
+        "gestta_task_id": f"eq.{gestta_task_id}",
+        "limit": "1",
+    })
+    if existente:
+        aviso_id = existente[0]["id"]
+        sb_update("fechamento_avisos", {"id": aviso_id}, row)
+    else:
+        ins = sb_insert("fechamento_avisos", row)
+        aviso_id = ins[0]["id"]
+    return {"aviso_id": aviso_id, "status": status}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Conecta a automação ao front (PROC-001 até Etapa 4)")
     ap.add_argument("--empresa-id", required=True)

@@ -953,7 +953,7 @@ export const listConciliacoes = createServerFn({ method: "GET" })
     return { competencia, empresas: data ?? [] };
   });
 
-/** Fechamento anual 2025 — portfolio de balancetes (tabela `balancetes` quando migration aplicada). */
+/** Fechamento anual 2025 — portfolio de balancetes + avisos sem cadastro LCR. */
 export const listFechamentos = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -971,19 +971,54 @@ export const listFechamentos = createServerFn({ method: "GET" })
         list.push(row);
         byEmp.set(row.empresa_id, list);
       }
-      if (byEmp.size === 0) return { metaTotal, empresas: [] as unknown[] };
 
-      const ids = [...byEmp.keys()];
-      const { data: emps, error: e2 } = await context.supabase
-        .from("empresas")
-        .select("id, razao_social, nome_fantasia, codigo_gestta")
-        .in("id", ids)
-        .order("razao_social");
-      if (e2) throw e2;
-      const empresas = (emps ?? []).map((e) => ({
-        ...e,
-        fechamentos: byEmp.get(e.id) ?? [],
+      let empresas: unknown[] = [];
+      if (byEmp.size > 0) {
+        const ids = [...byEmp.keys()];
+        const { data: emps, error: e2 } = await context.supabase
+          .from("empresas")
+          .select("id, razao_social, nome_fantasia, codigo_gestta")
+          .in("id", ids)
+          .order("razao_social");
+        if (e2) throw e2;
+        empresas = (emps ?? []).map((e) => ({
+          ...e,
+          fechamentos: byEmp.get(e.id) ?? [],
+        }));
+      }
+
+      const { data: avisos, error: e3 } = await context.supabase
+        .from("fechamento_avisos")
+        .select("id, codigo_gestta, nome_gestta, status, motivo, gestta_task_id, created_at")
+        .eq("exercicio", 2025)
+        .order("nome_gestta");
+      if (e3) throw e3;
+
+      const avisoRows = (avisos ?? []).map((a) => ({
+        id: a.id,
+        razao_social: a.nome_gestta,
+        nome_fantasia: null as string | null,
+        codigo_gestta: a.codigo_gestta,
+        aviso: true,
+        motivo: a.motivo,
+        fechamentos: [{
+          id: a.id,
+          status: a.status,
+          debitos_total: null,
+          creditos_total: null,
+          dc_ok: null,
+          gestta_task_id: a.gestta_task_id,
+          created_at: a.created_at,
+        }],
       }));
+
+      empresas = [...empresas, ...avisoRows].sort((a, b) =>
+        String((a as { razao_social?: string }).razao_social ?? "").localeCompare(
+          String((b as { razao_social?: string }).razao_social ?? ""),
+          "pt-BR",
+        ),
+      );
+
       return { metaTotal, empresas };
     } catch {
       return { metaTotal, empresas: [] as unknown[] };

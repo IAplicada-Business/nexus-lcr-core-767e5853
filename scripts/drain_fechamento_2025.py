@@ -91,7 +91,7 @@ def main():
         sem_emp = c.get("sem_empresa", 0) + c.get("match_ambiguo", 0)
         incompleta = c.get("incompleta", 0)
         pulada = c.get("pulada_idempotencia", 0)
-        progresso = ok + parcial + sem_emp
+        progresso = ok + parcial + sem_emp + incompleta
         total = res.get("total_tarefas")
 
         tot_ok += ok
@@ -122,7 +122,7 @@ def main():
                         continue
                 except Exception as e:
                     log(f"relogin falhou: {str(e)[:120]}")
-                log(f"⏹️ FIM: 3 lotes sem avanço (ok/parcial/sem_empresa). sem_empresa={tot_sem} erro={tot_erro}")
+                log(f"⏹️ FIM: 3 lotes sem avanço (ok/parcial/sem_empresa/incompleta). sem_empresa={tot_sem} incompleta={tot_inc} erro={tot_erro}")
                 break
         else:
             sem_progresso = 0

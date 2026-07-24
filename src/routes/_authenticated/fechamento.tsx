@@ -28,7 +28,15 @@ type FechRow = {
   gestta_task_id: string | null;
   created_at?: string | null;
 };
-type EmpRow = { id: string; razao_social: string; nome_fantasia: string | null; codigo_gestta: string | null; fechamentos: FechRow[] };
+type EmpRow = {
+  id: string;
+  razao_social: string;
+  nome_fantasia: string | null;
+  codigo_gestta: string | null;
+  fechamentos: FechRow[];
+  aviso?: boolean;
+  motivo?: string | null;
+};
 
 function statusVariant(status: string) {
   if (status === "ok") return "ok" as const;
@@ -46,6 +54,9 @@ function EmpresaRow({ empresa }: { empresa: EmpRow }) {
       <TableCell className="font-medium">
         <div>{empresa.razao_social}</div>
         {empresa.codigo_gestta && <div className="text-xs text-muted-foreground">{empresa.codigo_gestta}</div>}
+        {empresa.motivo && (
+          <div className="mt-1 text-xs text-muted-foreground">{empresa.motivo}</div>
+        )}
       </TableCell>
       <TableCell>
         <StatusPill variant={statusVariant(status)}>
@@ -55,12 +66,14 @@ function EmpresaRow({ empresa }: { empresa: EmpRow }) {
       <TableCell>{fech?.dc_ok == null ? "—" : fech.dc_ok ? "Sim" : "Não"}</TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-2">
-          {fech ? (
+          {fech && !empresa.aviso ? (
             <Button asChild variant="outline" size="sm">
               <Link to="/fechamento/$empresaId" params={{ empresaId: empresa.id }} search={{ balanceteId: fech.id }}>
                 Abrir
               </Link>
             </Button>
+          ) : empresa.aviso ? (
+            <span className="text-xs text-muted-foreground">Cadastrar no LCR</span>
           ) : (
             <span className="text-xs text-muted-foreground">Aguardando extração</span>
           )}

@@ -40,7 +40,7 @@ def analisar(statuses: list[str]) -> dict:
         nome = t.get("clienteNome") or ""
         if ja_processada_fechamento(tid):
             led = ledger.get(tid) or {}
-            if led.get("status") in ("sem_empresa", "match_ambiguo"):
+            if led.get("status") in ("sem_empresa", "match_ambiguo", "incompleta"):
                 avisos_pulados.append({
                     "codigo": cod, "nome": nome, "taskId": tid,
                     "status": led.get("status"), "motivo": led.get("motivo"),
