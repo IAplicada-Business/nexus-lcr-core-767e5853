@@ -983,6 +983,7 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
             faltantes={resultado?.faltantes}
             analisado={!!resultado}
             extratoFonte={resultado?.extrato_fonte}
+            extrato={extratoInfo}
             onDispensar={dispensarFaltante}
           />
         )}
@@ -1198,16 +1199,27 @@ export function ConciliacaoBancaria({ empresaId, competencia }: { empresaId: str
 // Painel v3 (motor de saldo + faltantes) — substitui o pareamento manual D/C.
 // KPIs de saldo inicial/final/movimentação/delta com badge confere/não confere,
 // e as duas listas de faltantes: extrato sem classificação, classificado sem extrato.
-function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte, onDispensar }: {
+function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte, extrato, onDispensar }: {
   saldo?: ResultadoSaldo;
   faltantes?: Faltantes;
   analisado: boolean;
   extratoFonte?: "csv" | "lancamentos_ia";
+  // OPT-0005: saldo inicial/final vêm do PRÓPRIO extrato (getConciliacaoDetalhe já
+  // extrai via extrairSaldosDocumento), então aparecem assim que o extrato existe —
+  // independente de "Analisar divergências" (que é travado pela revisão). Antes o
+  // saldo só surgia após a análise, mostrando "—" mesmo com o extrato presente.
+  extrato?: { saldo_inicial: number | null; saldo_final: number | null; movimentacao_liquida?: number } | null;
   onDispensar?: (lado: "extrato" | "lancamento", item: { id?: string; data: string | null; valor: number; descricao?: string | null }, remover?: boolean) => void;
 }) {
   // #fix-sinal-ia: alerta não-bloqueante — só exibe, não trava nem soma na
   // contagem de faltantes acima (motivo no comentário do tipo Faltantes).
   const divergenciasSinal = faltantes?.divergencias_sinal ?? [];
+  // Saldo inicial/final: análise (se houver) tem prioridade; senão, o valor
+  // extraído do próprio documento do extrato. Movimentação (D/C) idem — soma das
+  // linhas do extrato, disponível antes da análise.
+  const saldoInicial = saldo?.saldo_inicial ?? extrato?.saldo_inicial ?? null;
+  const saldoFinal = saldo?.saldo_final ?? extrato?.saldo_final ?? null;
+  const movimentacao = analisado ? (saldo?.movimentacao_liquida ?? 0) : (extrato?.movimentacao_liquida ?? null);
 
   return (
     <div className="space-y-4">
@@ -1218,9 +1230,9 @@ function SaldoFaltantesPanel({ saldo, faltantes, analisado, extratoFonte, onDisp
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <SaldoMini label="Saldo inicial" value={saldo?.saldo_inicial ?? null} />
-        <SaldoMini label="Saldo final (informado)" value={saldo?.saldo_final ?? null} />
-        <SaldoMini label="Movimentação (D/C)" value={analisado ? (saldo?.movimentacao_liquida ?? 0) : null} signed />
+        <SaldoMini label="Saldo inicial" value={saldoInicial} />
+        <SaldoMini label="Saldo final (informado)" value={saldoFinal} />
+        <SaldoMini label="Movimentação (D/C)" value={movimentacao} signed />
         <DeltaMini saldo={saldo} analisado={analisado} />
       </div>
 
