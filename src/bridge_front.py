@@ -565,8 +565,26 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
     if banco_cod_extrato != banco_cod:
         log(f"    multi-banco (OPT-0007): extrato '{banco_extrato_nome}' -> conta contabil {banco_cod_extrato} (padrao empresa era {banco_cod})")
 
-    log(f"\n[3] Classificando com o motor IA (banco {banco_cod_extrato}, {comp_motor})...")
-    resultado = classificar_extrato(transacoes, conta_banco=banco_cod_extrato, competencia=comp_motor)
+    # OPT-0007 investimento: conta de APLICAÇÃO do banco deste extrato (663 Inter,
+    # 662 Santander, 661 Itaú-1...). O motor usa esse código nas regras INV-01/02/03
+    # (aplicação/resgate/rendimento) para separar por banco em vez de jogar tudo
+    # numa conta só. None quando o banco não tem conta de aplicação mapeada → a IA
+    # manda a linha p/ revisão em vez de chutar.
+    conta_aplicacao_extrato = None
+    try:
+        from gerar_planilha_supabase import resolver_conta_aplicacao_do_extrato  # noqa: E402
+        # deriva da conta corrente JÁ resolvida (banco_cod_extrato) p/ garantir
+        # mesmo banco; nome detectado como fallback.
+        conta_aplicacao_extrato = resolver_conta_aplicacao_do_extrato(
+            banco_cod_corrente=banco_cod_extrato, banco_detectado=banco_extrato_nome)
+    except Exception as e:
+        log(f"    AVISO: resolucao conta de aplicacao (OPT-0007 investimento) falhou ({e})")
+    if conta_aplicacao_extrato is not None:
+        log(f"    investimento (OPT-0007): conta de aplicacao do banco '{banco_extrato_nome}' -> {conta_aplicacao_extrato}")
+
+    log(f"\n[3] Classificando com o motor IA (banco {banco_cod_extrato}, aplic {conta_aplicacao_extrato}, {comp_motor})...")
+    resultado = classificar_extrato(transacoes, conta_banco=banco_cod_extrato, competencia=comp_motor,
+                                    conta_aplicacao=conta_aplicacao_extrato)
     aprovadas = resultado["aprovadas"]
     revisao = [r["classificacao_sugerida"] for r in resultado["revisao_manual"]]
     log(f"    aprovadas={len(aprovadas)} revisão={len(revisao)} erros={resultado['resumo']['erros']}")
@@ -577,7 +595,12 @@ def processar_extrato(empresa_id, competencia, extrato_path, banco_cod, jwt, ori
 
     lancamentos, sem_conta = [], 0
     for linha in aprovadas + revisao:
-        reg, conta_id = linha_para_lancamento(linha, banco_cod, conta_map, hist_map,
+        # banco_cod_extrato (não banco_cod): a IA classificou usando a conta do
+        # banco DESTE extrato, então a detecção da contrapartida (lado que não é o
+        # banco) tem que comparar com o mesmo código. Com banco_cod (padrão da
+        # empresa) num extrato multi-banco, resgate (D:banco C:aplicação) caía no
+        # fallback e gravava o banco como conta contábil. (OPT-0007)
+        reg, conta_id = linha_para_lancamento(linha, banco_cod_extrato, conta_map, hist_map,
                                               empresa_id, competencia, competencia_id, documento_id)
         if conta_id is None:
             sem_conta += 1

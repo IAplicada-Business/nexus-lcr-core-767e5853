@@ -106,6 +106,98 @@ def buscar_apelidos_banco() -> dict[str, int]:
 # Compat legado (imports antigos de orquestrar/corrigir_extratos).
 BANCO_PARA_CODIGO = BANCO_PARA_CODIGO_FALLBACK
 
+# OPT-0007 investimento (Bruno 22/07) — banco detectado → conta contábil de
+# APLICAÇÃO daquele banco (grupo 01.1.1.03 "APLICAÇÕES DE LIQUIDEZ IMEDIATA" do
+# plano LCR). Diferente do dict acima (que mapeia p/ a conta CORRENTE): aqui é a
+# conta onde o dinheiro fica APLICADO. O plano de contas NÃO tem uma conta de
+# aplicação genérica — é uma por banco (~50), então aplicar sem esse resolvedor
+# jogaria toda aplicação numa conta fixa (ex. só Inter), pareando "Aplicação
+# Inter" com "Banco Santander". Regra do cliente (reunião Fase 1): sempre a conta
+# nº 1 do banco (Itaú/Inter têm 1..5 — usamos a "1"). Bancos sem conta de
+# aplicação cadastrada (PagSeguro, Stone, Cora, Wise…) resolvem p/ None → a IA
+# manda a linha p/ revisão em vez de chutar.
+BANCO_PARA_APLICACAO_FALLBACK = {
+    "bradesco": 660,
+    "brasil": 12,
+    "bb ": 12,
+    "caixa": 13,
+    "santander": 662,
+    "itau": 661,      # Aplicação - Banco Itaú 1 (conta nº 1)
+    "inter": 663,     # Aplicação - Banco Inter (conta nº 1)
+    "sicoob": 664,
+    "sicredi": 1166,  # Aplicação - Banco Sicredi Vale (única cadastrada)
+    "original": 810,
+    "nu pagamentos": 822,
+    "nubank": 822,
+    "xp ": 824,
+    "c6": 811,
+    "safra": 819,     # Aplicação - Banco Safra S/A (analítica)
+    "btg": 1103,
+    "bs2": 831,
+    "semear": 816,
+    "sofisa": 713,
+    "daycoval": 714,
+    "unicred": 938,
+    "votorantim": 1162,
+    "mercado pago": 961,
+}
+
+
+def buscar_apelidos_aplicacao() -> dict[str, int]:
+    """Aliases de banco → conta de APLICAÇÃO. Reusa as chaves de
+    `bancos_apelidos_lcr` (mesma grafia/aliases da conta corrente) mas com o
+    código da conta de aplicação, quando a tabela tiver a coluna
+    `codigo_aplicacao_lcr`; senão cai no dict fallback embutido. Mantém o mesmo
+    contrato de longest-alias-match de _resolver_codigo_banco."""
+    try:
+        rows = sb_get("bancos_apelidos_lcr", {"select": "alias,codigo_aplicacao_lcr"})
+    except RuntimeError:
+        return dict(BANCO_PARA_APLICACAO_FALLBACK)
+    out = {
+        r["alias"]: int(r["codigo_aplicacao_lcr"])
+        for r in rows
+        if r.get("alias") and r.get("codigo_aplicacao_lcr") is not None
+    }
+    return out or dict(BANCO_PARA_APLICACAO_FALLBACK)
+
+
+def _mapa_corrente_para_aplicacao(
+    apelidos_corrente: dict[str, int] | None = None,
+    apelidos_aplicacao: dict[str, int] | None = None,
+) -> dict[int, int]:
+    """Constrói {código conta CORRENTE → código conta APLICAÇÃO} casando os dois
+    dicts pelas MESMAS chaves de alias (ex.: "inter" → corrente 658 e aplicação
+    663 ⇒ 658→663). Garante que a aplicação usada é sempre do MESMO banco da
+    conta corrente já resolvida (evita parear aplicação de um banco com a corrente
+    de outro quando a guarda de multi-banco cai no fallback da empresa)."""
+    corr = apelidos_corrente or buscar_apelidos_banco()
+    aplic = apelidos_aplicacao or buscar_apelidos_aplicacao()
+    out: dict[int, int] = {}
+    for alias, cod_corr in corr.items():
+        if alias in aplic:
+            out[int(cod_corr)] = int(aplic[alias])
+    return out
+
+
+def resolver_conta_aplicacao_do_extrato(
+    banco_cod_corrente: int | None = None,
+    banco_detectado: str | None = None,
+    apelidos_aplicacao: dict[str, int] | None = None,
+) -> int | None:
+    """OPT-0007 investimento — código da conta contábil de APLICAÇÃO a usar nas
+    regras INV-01/02/03. Deriva PRIMEIRO do código da conta CORRENTE já resolvida
+    (banco_cod_corrente) para garantir que aplicação e corrente são do mesmo
+    banco; se não mapear, cai no nome detectado no extrato. Retorna None se nada
+    mapear ou o banco é placeholder — o caller não deve chutar."""
+    if banco_cod_corrente is not None:
+        m = _mapa_corrente_para_aplicacao(apelidos_aplicacao=apelidos_aplicacao)
+        if int(banco_cod_corrente) in m:
+            return m[int(banco_cod_corrente)]
+    if banco_detectado and not _eh_banco_placeholder(banco_detectado):
+        ap = apelidos_aplicacao or buscar_apelidos_aplicacao()
+        return _resolver_codigo_banco(banco_detectado, ap)
+    return None
+
 COLUNAS_SCI = [
     "DATA",
     "DÉBITO",
