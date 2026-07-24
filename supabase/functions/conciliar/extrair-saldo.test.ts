@@ -39,6 +39,14 @@ Deno.test("extrairSaldosDeTexto — 'saldo inicial e final (ambos R$ 140,30)' (v
   assertEquals(r.final, 140.30);
 });
 
+// OPT-0005 — caso REAL da Cultive 2026-04: "Saldo inicial R$ X e final R$ Y"
+// (valores distintos; "final" sem "saldo" antes — reFinal sozinho não pega).
+Deno.test("extrairSaldosDeTexto — 'Saldo inicial R$ X e final R$ Y' (Cultive)", () => {
+  const r = extrairSaldosDeTexto("Extrato Banco Inter. Saldo inicial R$ 22.456,28 e final R$ 13.795,25. Diversos PIX.");
+  assertEquals(r.inicial, 22456.28);
+  assertEquals(r.final, 13795.25);
+});
+
 Deno.test("extrairSaldosDeTexto — saldo anterior/final com data entre parênteses", () => {
   const r = extrairSaldosDeTexto("Saldo anterior (31/01): R$ 0,00. Saldo final (28/02): R$ 25,79.");
   assertEquals(r.inicial, 0);

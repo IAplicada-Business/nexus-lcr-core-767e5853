@@ -43,6 +43,12 @@ describe("saldo-extracao", () => {
     expect(r.final).toBe(25.79);
   });
 
+  it("Cultive: 'Saldo inicial R$ X e final R$ Y' (valores distintos, sem 'saldo' antes de final)", () => {
+    const r = extrairSaldosDeTexto("Extrato Banco Inter. Saldo inicial R$ 22.456,28 e final R$ 13.795,25. Diversos PIX.");
+    expect(r.inicial).toBe(22456.28);
+    expect(r.final).toBe(13795.25);
+  });
+
   it("vídeo 1: forma composta 'saldo inicial e final (ambos R$ 140,30)'", () => {
     const r = extrairSaldosDeTexto(
       "Extrato do Banco Inter (01/12/2025 a 31/12/2025). Apresenta saldo inicial e final (ambos R$ 140,30), e o período completo.",

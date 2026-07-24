@@ -50,6 +50,18 @@ export function extrairSaldosDeTexto(texto: string): { inicial: number | null; f
     final = mf[1] != null ? parseValorBr(mf[1]) : null;
     if (final == null && /\bzero\b/i.test(mf[0])) final = 0;
   }
+  // "saldo inicial R$ X e final R$ Y" (valores distintos na mesma frase): reFinal
+  // sozinho não pega o "e final" (não há "saldo" antes de "final"). Captura os dois.
+  if (inicial == null || final == null) {
+    const V = String.raw`(?:R\$\s*)?([\d.]+(?:,\d{2})?|\d+(?:[.,]\d+)?|zero)`;
+    const reIniEFim = new RegExp(String.raw`saldos?\s+inicial[\s:=-]*` + V + String.raw`\s+e\s+final[\s:=-]*` + V, "i");
+    const m = texto.match(reIniEFim);
+    if (m) {
+      const pv = (x: string | undefined) => (x == null ? null : (/^zero$/i.test(x) ? 0 : parseValorBr(x)));
+      if (inicial == null) inicial = pv(m[1]);
+      if (final == null) final = pv(m[2]);
+    }
+  }
   // Forma composta "saldo(s) inicial e final ... (ambos) R$ X": um único valor
   // descreve os dois lados (extrato sem movimento).
   if (inicial == null || final == null) {
