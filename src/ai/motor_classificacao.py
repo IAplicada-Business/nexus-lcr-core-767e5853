@@ -144,6 +144,10 @@ REGRAS IMPORTANTES:
 1. Use o MAPA DE TRANSAÇÕES TÍPICAS como referência PRINCIPAL — ele tem regras explícitas por tipo
 2. Quando o Mapa indicar "Banco C6", "Banco Bradesco" ou qualquer banco na conta de débito/crédito,
    substitua pelo código SCI real do banco deste cliente (informado no prompt)
+2b. Quando o Mapa indicar "CONTA_APLICACAO" (regras de investimento INV-01/02/03: aplicação,
+   resgate, rendimento), substitua pelo CÓDIGO DA CONTA DE APLICAÇÃO informado no prompt. Se o
+   prompt disser que a conta de aplicação é "indisponível", NÃO invente um código: marque a
+   transação com confianca < 0.7 para cair em revisão humana.
 3. Extraia o código numérico das contas: "160 - Salários a pagar" → débito = 160
 4. Siga a Regra de COMPLEMENTO exatamente: MM/AAAA = competência, nome = extraia da descrição
 5. "Participante" só é preenchido quando a coluna PARTICIPANTE do Mapa indicar D ou C
@@ -232,7 +236,8 @@ def classificar_extrato_batch(
     transacoes: list,
     conta_banco: int,
     competencia: str,
-    contexto: str
+    contexto: str,
+    conta_aplicacao: int = None
 ) -> list:
     """
     Classifica todas as transações em uma única chamada API (batch).
@@ -260,10 +265,20 @@ def classificar_extrato_batch(
         {"type": "text", "text": contexto, "cache_control": {"type": "ephemeral"}},
     ]
 
+    aplic_txt = (
+        f"CONTA DE APLICAÇÃO DESTE BANCO NO SCI: {conta_aplicacao}\n"
+        f"(nas regras de investimento INV-01/02/03, substitua \"CONTA_APLICACAO\" pelo código {conta_aplicacao})"
+        if conta_aplicacao is not None
+        else "CONTA DE APLICAÇÃO DESTE BANCO: indisponível "
+             "(se aparecer aplicação/resgate, marque confianca < 0.7 p/ revisão — NÃO invente conta)"
+    )
+
     prompt = f"""Classifique as transacoes bancarias abaixo para importacao no SCI Unico.
 
 CONTA BANCÁRIA DESTE CLIENTE NO SCI: {conta_banco}
 (substitua qualquer referência a "Banco C6", "Banco Bradesco" ou similar pelo código {conta_banco})
+
+{aplic_txt}
 
 Competencia: {comp_fmt}
 
@@ -307,12 +322,17 @@ Responda APENAS com o array JSON, sem markdown."""
 def classificar_extrato(
     transacoes: list,
     conta_banco: int,
-    competencia: str
+    competencia: str,
+    conta_aplicacao: int = None
 ) -> dict:
     """
     Classifica todas as transacoes de um extrato.
     Usa batch (1 chamada API para todas as transacoes) para respeitar rate limits.
     Retorna dict com linhas aprovadas e linhas para revisao manual.
+
+    conta_aplicacao: conta contábil de APLICAÇÃO do banco deste extrato (OPT-0007
+    investimento). Usada pelas regras INV-01/02/03 p/ separar aplicação/resgate/
+    rendimento por banco. None quando o banco não tem conta de aplicação mapeada.
     """
 
     mapa         = carregar_mapa_transacoes()
@@ -336,7 +356,7 @@ def classificar_extrato(
         bloco = transacoes[ini:ini + CHUNK]
         try:
             parciais = classificar_extrato_batch(
-                bloco, conta_banco, competencia, contexto
+                bloco, conta_banco, competencia, contexto, conta_aplicacao
             )
             for k, linha in enumerate(parciais):
                 linha['idx'] = ini + k + 1  # idx global por ordem (não confia no idx do modelo)
